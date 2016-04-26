@@ -6,7 +6,9 @@ Release:	1
 License:	GPL v3
 Group:		X11/Applications
 #Source0Download: https://gitlab.com/accounts-sso/signon-ui/tags
-Source0:	https://gitlab.com/accounts-sso/signon-ui/repository/archive.tar.bz2?ref=%{version}
+# TODO: in the future use fake GET arg to force sane filename on df
+#Source0:	https://gitlab.com/accounts-sso/signon-ui/repository/archive.tar.bz2?ref=%{version}&fake_out=/%{name}-%{version}.tar.bz2
+Source0:	archive.tar.bz2%3Fref=%{version}
 # Source0-md5:	f8206f24d0b8050419ba55df37b4e990
 URL:		https://gitlab.com/accounts-sso/signon-ui
 BuildRequires:	Qt5Core-devel >= 5
