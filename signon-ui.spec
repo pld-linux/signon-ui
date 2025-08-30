@@ -1,32 +1,49 @@
+#
+# Conditional build:
+%bcond_with	qt5	# build with qt5-based signon
+
+%if %{with qt5}
+%define	qtmajor		5
+%define	qt_ver		5.0
+%define	signon_ver	8.58
+%else
+%define	qtmajor		6
+%define	qt_ver		6.0
+%define	signon_ver	8.62
+%endif
 Summary:	Single Sign-on UI
 Summary(pl.UTF-8):	Interfejs użytkownika do wspólnego logowania
 Name:		signon-ui
-Version:	0.16
+Version:	0.17
+%define	gitref	%{version}+15.10.20150810-0ubuntu1
 Release:	1
 License:	GPL v3
 Group:		X11/Applications
 #Source0Download: https://gitlab.com/accounts-sso/signon-ui/tags
-# TODO: in the future use fake GET arg to force sane filename on df
-#Source0:	https://gitlab.com/accounts-sso/signon-ui/repository/archive.tar.bz2?ref=%{version}&fake_out=/%{name}-%{version}.tar.bz2
-Source0:	archive.tar.bz2%3Fref=%{version}
-# Source0-md5:	f8206f24d0b8050419ba55df37b4e990
+Source0:	https://gitlab.com/accounts-sso/signon-ui/-/archive/%{gitref}/%{name}-%{gitref}.tar.bz2
+# Source0-md5:	5ecb7fabe073dc3132fbda9eb8aab431
+Patch0:		%{name}-git.patch
 URL:		https://gitlab.com/accounts-sso/signon-ui
-BuildRequires:	Qt5Core-devel >= 5
-BuildRequires:	Qt5DBus-devel >= 5
-BuildRequires:	Qt5Gui-devel >= 5
-BuildRequires:	Qt5Network-devel >= 5
-BuildRequires:	Qt5Quick-devel >= 5
-BuildRequires:	Qt5WebKit-devel >= 5
-BuildRequires:	Qt5Widgets-devel >= 5
-BuildRequires:	libaccounts-qt5-devel
+BuildRequires:	Qt%{qtmajor}Core-devel >= %{qt_ver}
+BuildRequires:	Qt%{qtmajor}DBus-devel >= %{qt_ver}
+BuildRequires:	Qt%{qtmajor}Gui-devel >= %{qt_ver}
+BuildRequires:	Qt%{qtmajor}Network-devel >= %{qt_ver}
+BuildRequires:	Qt%{qtmajor}Quick-devel >= %{qt_ver}
+BuildRequires:	Qt%{qtmajor}WebEngine-devel >= %{qt_ver}
+BuildRequires:	Qt%{qtmajor}Widgets-devel >= %{qt_ver}
+BuildRequires:	libaccounts-qt%{qtmajor}-devel
 BuildRequires:	libnotify-devel
 BuildRequires:	libproxy-devel
-BuildRequires:	libsignon-qt5-devel
+BuildRequires:	libsignon-qt%{qtmajor}-devel
 BuildRequires:	pkgconfig
-BuildRequires:	qt5-build
-BuildRequires:	qt5-qmake
-BuildRequires:	signon-devel >= 8.58
+BuildRequires:	qt%{qtmajor}-build >= %{qt_ver}
+BuildRequires:	qt%{qtmajor}-qmake >= %{qt_ver}
+BuildRequires:	signon-devel >= %{signon_ver}
 BuildRequires:	xorg-lib-libX11-devel
+%if %{without qt5}
+# WebEngine required
+ExclusiveArch:	%{x8664} aarch64
+%endif
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
@@ -37,10 +54,11 @@ Interfejs użytkownika dla usługi signond mechanizmu Single Signon
 (wspólnego logowania do wielu usług).
 
 %prep
-%setup -q -n %{name}-%{version}-fbe810a5a55c949f6f3e81deb859e2ecd8acc863
+%setup -q -n %{name}-%{gitref}
+%patch -P0 -p1
 
 %build
-qmake-qt5 \
+qmake-qt%{qtmajor} \
 	QMAKE_CXX="%{__cxx}" \
 	QMAKE_CXXFLAGS_RELEASE="%{rpmcxxflags}" \
 	QMAKE_LFLAGS_RELEASE="%{rpmldflags}"

@@ -1,0 +1,3215 @@
+From 3acb6541aab32db9990e0c0ec85e2e1bbef748ec Mon Sep 17 00:00:00 2001
+From: Martin Klapetek <mklapetek@kde.org>
+Date: Fri, 6 Nov 2015 16:33:18 -0500
+Subject: [PATCH] Print HTTP errors in debug output
+
+This should help when debugging problems with opening certain login
+pages; currently it just outputs
+
+browser-request.cpp 362 onLoadFinished Load finished false
+
+which is not very helpful. So this adds the actual error code and error
+string to the debug output.
+---
+ src/browser-request.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/browser-request.cpp b/src/browser-request.cpp
+index 90e6348..922404f 100644
+--- a/src/browser-request.cpp
++++ b/src/browser-request.cpp
+@@ -247,6 +247,7 @@ public:
+ 
+ private Q_SLOTS:
+     void onSslErrors(QNetworkReply *reply, const QList<QSslError> &errors);
++    void onRequestFinished(QNetworkReply *reply);
+     void onUrlChanged(const QUrl &url);
+     void onLoadProgress();
+     void onLoadFinished(bool ok);
+@@ -329,6 +330,14 @@ void BrowserRequestPrivate::onSslErrors(QNetworkReply *reply,
+     }
+ }
+ 
++void BrowserRequestPrivate::onRequestFinished(QNetworkReply *reply)
++{
++    if (reply->error() != QNetworkReply::NoError) {
++        TRACE() << "The last request finished with error code"
++                << reply->error() << "-" << reply->errorString();
++    }
++}
++
+ void BrowserRequestPrivate::onUrlChanged(const QUrl &url)
+ {
+     Q_Q(BrowserRequest);
+@@ -449,6 +458,8 @@ QWidget *BrowserRequestPrivate::buildWebViewPage(const QVariantMap &params)
+     QObject::connect(page->networkAccessManager(),
+                      SIGNAL(sslErrors(QNetworkReply*,const QList<QSslError> &)),
+                      this, SLOT(onSslErrors(QNetworkReply*,const QList<QSslError> &)));
++    QObject::connect(page->networkAccessManager(), SIGNAL(finished(QNetworkReply*)),
++                     this, SLOT(onRequestFinished(QNetworkReply*)));
+     m_webView->setPage(page);
+ 
+     /* The following couple of lines serve to instruct the QWebPage not to load
+-- 
+GitLab
+
+From f1cec4e8c5bd4119700e7f934a780865f85d11cd Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Mon, 23 Nov 2015 14:40:17 +0200
+Subject: [PATCH] Remove trailing "/" when comparing paths
+
+---
+ src/browser-request.cpp | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/browser-request.cpp b/src/browser-request.cpp
+index 922404f..9da9685 100644
+--- a/src/browser-request.cpp
++++ b/src/browser-request.cpp
+@@ -76,6 +76,14 @@ static const QString keyCookies = QString("Cookies");
+ static const QString keyAllowedSchemes = QString("AllowedSchemes");
+ static const QString keyIgnoreSslErrors = QString("IgnoreSslErrors");
+ 
++static bool pathsAreEqual(const QString &p1, const QString &p2)
++{
++    static QRegExp regExp("/*$");
++    QString p1copy(p1);
++    QString p2copy(p2);
++    return p1copy.remove(regExp) == p2copy.remove(regExp);
++}
++
+ class WebPage: public QWebPage
+ {
+     Q_OBJECT
+@@ -128,7 +136,7 @@ protected:
+          * If this behaviour is not desired for some requests, then just avoid
+          * calling setFinalUrl() */
+         if (url.host() == m_finalUrl.host() &&
+-            url.path() == m_finalUrl.path()) {
++            pathsAreEqual(url.path(), m_finalUrl.path())) {
+             Q_EMIT finalUrlReached(url);
+             return false;
+         }
+@@ -346,7 +354,7 @@ void BrowserRequestPrivate::onUrlChanged(const QUrl &url)
+     m_failTimer.stop();
+ 
+     if (url.host() == finalUrl.host() &&
+-        url.path() == finalUrl.path()) {
++        pathsAreEqual(url.path(), finalUrl.path())) {
+         responseUrl = url;
+         if (q->embeddedUi() || !m_dialog->isVisible()) {
+             /* Do not show the notification page. */
+-- 
+GitLab
+
+From 2e71d4ac35db3022b4812098ad529a421be497d4 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Mon, 4 Apr 2016 13:26:46 +0300
+Subject: [PATCH] WIP
+
+---
+ src/qml/DefaultPage.qml        |  2 +-
+ src/qml/MainWindow.qml         |  2 +-
+ src/qml/WebView.qml            | 11 +++++------
+ src/qquick-dialog.cpp          |  3 ++-
+ src/ubuntu-browser-request.cpp |  2 ++
+ 5 files changed, 11 insertions(+), 9 deletions(-)
+
+diff --git a/src/qml/DefaultPage.qml b/src/qml/DefaultPage.qml
+index 28ce200..3d49997 100644
+--- a/src/qml/DefaultPage.qml
++++ b/src/qml/DefaultPage.qml
+@@ -1,5 +1,5 @@
+ import QtQuick 2.0
+-import Ubuntu.Components 0.1
++import Ubuntu.Components 1.3
+ 
+ Page {
+     Loader {
+diff --git a/src/qml/MainWindow.qml b/src/qml/MainWindow.qml
+index 41e07c3..eae45d5 100644
+--- a/src/qml/MainWindow.qml
++++ b/src/qml/MainWindow.qml
+@@ -1,5 +1,5 @@
+ import QtQuick 2.0
+-import Ubuntu.Components 0.1
++import Ubuntu.Components 1.3
+ 
+ MainView {
+     id: root
+diff --git a/src/qml/WebView.qml b/src/qml/WebView.qml
+index ada3c01..935f2ac 100644
+--- a/src/qml/WebView.qml
++++ b/src/qml/WebView.qml
+@@ -1,12 +1,11 @@
+ import QtQuick 2.0
+-import Ubuntu.Components 0.1
+-import Ubuntu.Components.Extras.Browser 0.2
+-import com.canonical.Oxide 1.0
++import Ubuntu.Components 1.3
++import Ubuntu.Web 0.2
+ 
+-UbuntuWebView {
++WebView {
+     Component.onCompleted: url = signonRequest.startUrl
+ 
+-    onLoadingChanged: {
++    onLoadingStateChanged: {
+         console.log("Loading changed")
+         if (loading) {
+             signonRequest.onLoadStarted()
+@@ -18,7 +17,7 @@ UbuntuWebView {
+     }
+     onUrlChanged: signonRequest.currentUrl = url
+ 
+-    context: UbuntuWebContext {
++    context: WebContext {
+         dataPath: rootDir
+     }
+ }
+diff --git a/src/qquick-dialog.cpp b/src/qquick-dialog.cpp
+index dc9fa19..6a45fcc 100644
+--- a/src/qquick-dialog.cpp
++++ b/src/qquick-dialog.cpp
+@@ -33,7 +33,7 @@ Dialog::Dialog(QWindow *parent):
+     QQuickView(parent)
+ {
+     setResizeMode(QQuickView::SizeRootObjectToView);
+-    setWindowState(Qt::WindowFullScreen);
++    //setWindowState(Qt::WindowFullScreen);
+ }
+ 
+ Dialog::~Dialog()
+@@ -42,6 +42,7 @@ Dialog::~Dialog()
+ 
+ void Dialog::show(WId parent, ShowMode mode)
+ {
++    create();
+ #if HAS_FOREIGN_QWINDOW
+     if (mode != TopLevel) {
+         QWindow *parentWindow = QWindow::fromWinId(parent);
+diff --git a/src/ubuntu-browser-request.cpp b/src/ubuntu-browser-request.cpp
+index 0db37b8..4387889 100644
+--- a/src/ubuntu-browser-request.cpp
++++ b/src/ubuntu-browser-request.cpp
+@@ -226,6 +226,8 @@ void UbuntuBrowserRequestPrivate::onFinished()
+     Q_Q(UbuntuBrowserRequest);
+ 
+     TRACE() << "Browser dialog closed";
++    QObject::disconnect(m_dialog, SIGNAL(finished(int)),
++                        this, SLOT(onFinished()));
+ 
+     QVariantMap reply;
+     QUrl url = m_responseUrl.isEmpty() ? m_currentUrl : m_responseUrl;
+-- 
+GitLab
+
+From 50b6a19f66037ac9beac100ec339112e2b1d71d0 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Mon, 4 Apr 2016 14:51:22 +0300
+Subject: [PATCH] Use plain Item as base
+
+---
+ src/qml/MainWindow.qml | 2 +-
+ src/qquick-dialog.cpp  | 1 -
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/qml/MainWindow.qml b/src/qml/MainWindow.qml
+index eae45d5..a55ca48 100644
+--- a/src/qml/MainWindow.qml
++++ b/src/qml/MainWindow.qml
+@@ -1,7 +1,7 @@
+ import QtQuick 2.0
+ import Ubuntu.Components 1.3
+ 
+-MainView {
++Item {
+     id: root
+     width: units.gu(60)
+     height: units.gu(90)
+diff --git a/src/qquick-dialog.cpp b/src/qquick-dialog.cpp
+index 6a45fcc..40b78b6 100644
+--- a/src/qquick-dialog.cpp
++++ b/src/qquick-dialog.cpp
+@@ -33,7 +33,6 @@ Dialog::Dialog(QWindow *parent):
+     QQuickView(parent)
+ {
+     setResizeMode(QQuickView::SizeRootObjectToView);
+-    //setWindowState(Qt::WindowFullScreen);
+ }
+ 
+ Dialog::~Dialog()
+-- 
+GitLab
+
+From 58d1bf30a1765f77996882568e9e1513f709f496 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Wed, 6 Apr 2016 10:43:38 +0300
+Subject: [PATCH] Improve oxide webview
+
+---
+ src/qml/WebView.qml | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/src/qml/WebView.qml b/src/qml/WebView.qml
+index 935f2ac..539eb52 100644
+--- a/src/qml/WebView.qml
++++ b/src/qml/WebView.qml
+@@ -3,15 +3,17 @@ import Ubuntu.Components 1.3
+ import Ubuntu.Web 0.2
+ 
+ WebView {
++    id: root
++
+     Component.onCompleted: url = signonRequest.startUrl
+ 
+     onLoadingStateChanged: {
+         console.log("Loading changed")
+-        if (loading) {
++        if (loading && !lastLoadFailed) {
+             signonRequest.onLoadStarted()
+         } else if (lastLoadSucceeded) {
+             signonRequest.onLoadFinished(true)
+-        } else {
++        } else if (lastLoadFailed) {
+             signonRequest.onLoadFinished(false)
+         }
+     }
+@@ -20,4 +22,16 @@ WebView {
+     context: WebContext {
+         dataPath: rootDir
+     }
++
++    /* Taken from webbrowser-app */
++    ProgressBar {
++        anchors.top: parent.top
++        anchors.left: parent.left
++        anchors.right: parent.right
++        height: units.dp(3)
++        showProgressPercentage: false
++        visible: root.loading
++        value: root.loadProgress / 100
++    }
++
+ }
+-- 
+GitLab
+
+From 437742f6e9802362ba765c5f9a7332e002dad886 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Wed, 6 Apr 2016 11:00:59 +0300
+Subject: [PATCH] Use UbuntuWebView in Unity
+
+---
+ src/qml/WebView.qml | 1 -
+ src/request.cpp     | 4 +---
+ 2 files changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/src/qml/WebView.qml b/src/qml/WebView.qml
+index 539eb52..339a2af 100644
+--- a/src/qml/WebView.qml
++++ b/src/qml/WebView.qml
+@@ -33,5 +33,4 @@ WebView {
+         visible: root.loading
+         value: root.loadProgress / 100
+     }
+-
+ }
+diff --git a/src/request.cpp b/src/request.cpp
+index 5d5dae3..4757bc7 100644
+--- a/src/request.cpp
++++ b/src/request.cpp
+@@ -312,10 +312,8 @@ Request *Request::newRequest(const QDBusConnection &connection,
+     if (parameters.contains(SSOUI_KEY_OPENURL)) {
+ #ifdef USE_UBUNTU_WEB_VIEW
+         TRACE() << "Platform:" << QGuiApplication::platformName();
+-        /* We need to use the RemoteRequest implementation in UbuntuTouch,
+-         * because displaying of QtWidgets is not working there. This is a
+-         * workaround which can be revisited later. */
+         if (QGuiApplication::platformName().startsWith("ubuntu") ||
++            qgetenv("XDG_CURRENT_DESKTOP") == QByteArray("Unity") ||
+             qgetenv("SSOUI_USE_UBUNTU_WEB_VIEW") == QByteArray("1")) {
+             return new UbuntuBrowserRequest(connection, message,
+                                             parameters, parent);
+-- 
+GitLab
+
+From 52e0cf909541ec74882076f566f0b31ec4c93384 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Wed, 2 Nov 2016 13:55:09 +0300
+Subject: [PATCH] Remove XEmbed (it's qt 4 code)
+
+---
+ src/request.cpp | 48 ------------------------------------------------
+ 1 file changed, 48 deletions(-)
+
+diff --git a/src/request.cpp b/src/request.cpp
+index 4757bc7..521fcff 100644
+--- a/src/request.cpp
++++ b/src/request.cpp
+@@ -18,7 +18,6 @@
+  * with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#define HAS_XEMBED (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
+ #define HAS_FOREIGN_QWINDOW (QT_VERSION >= QT_VERSION_CHECK(5, 1, 0) || \
+                              defined(FORCE_FOREIGN_QWINDOW))
+ #include "request.h"
+@@ -29,9 +28,6 @@
+ #include "browser-request.h"
+ #include "debug.h"
+ #include "dialog-request.h"
+-#if HAS_XEMBED
+-#include "embed-manager.h"
+-#endif
+ #include "errors.h"
+ #include "indicator-service.h"
+ #ifndef UNIT_TESTS
+@@ -81,9 +77,6 @@ public:
+     }
+ 
+ private Q_SLOTS:
+-#if HAS_XEMBED
+-    void onEmbedError();
+-#endif
+     void onIndicatorCallFinished(QDBusPendingCallWatcher *watcher);
+ 
+ private:
+@@ -139,26 +132,6 @@ void RequestPrivate::setWidget(QWidget *widget)
+ 
+     m_widget = widget;
+ 
+-#if HAS_XEMBED
+-    if (embeddedUi() && windowId() != 0) {
+-        TRACE() << "Requesting widget embedding";
+-        QX11EmbedWidget *embed =
+-            EmbedManager::instance()->widgetFor(windowId());
+-        QObject::connect(embed, SIGNAL(error(QX11EmbedWidget::Error)),
+-                         this, SLOT(onEmbedError()),
+-                         Qt::UniqueConnection);
+-        QObject::connect(embed, SIGNAL(containerClosed()),
+-                         widget, SLOT(close()));
+-        QVBoxLayout *layout = new QVBoxLayout;
+-        layout->addWidget(widget);
+-        widget->show();
+-        /* Delete any previous layout */
+-        delete embed->layout();
+-        embed->setLayout(layout);
+-        embed->show();
+-        return;
+-    }
+-#endif
+ #if HAS_FOREIGN_QWINDOW
+     if (embeddedUi() && windowId() != 0) {
+         TRACE() << "Requesting window embedding";
+@@ -177,14 +150,6 @@ void RequestPrivate::setWidget(QWidget *widget)
+ 
+     widget->setWindowModality(Qt::WindowModal);
+     widget->show();
+-#if QT_VERSION < QT_VERSION_CHECK(5, 0, 0)
+-    if (windowId() != 0) {
+-        TRACE() << "Setting" << widget->effectiveWinId() << "transient for" << windowId();
+-        XSetTransientForHint(QX11Info::display(),
+-                             widget->effectiveWinId(),
+-                             windowId());
+-    }
+-#endif
+ #if HAS_FOREIGN_QWINDOW
+     if (windowId() != 0) {
+         TRACE() << "Requesting window reparenting";
+@@ -194,19 +159,6 @@ void RequestPrivate::setWidget(QWidget *widget)
+ #endif
+ }
+ 
+-#if HAS_XEMBED
+-void RequestPrivate::onEmbedError()
+-{
+-    Q_Q(Request);
+-
+-    QX11EmbedWidget *embed = qobject_cast<QX11EmbedWidget*>(sender());
+-    TRACE() << "Embed error:" << embed->error();
+-
+-    q->fail(SIGNON_UI_ERROR_EMBEDDING_FAILED,
+-            QString("Embedding signon UI failed: %1").arg(embed->error()));
+-}
+-#endif
+-
+ Accounts::Account *RequestPrivate::findAccount()
+ {
+     if (!m_parameters.contains(SSOUI_KEY_IDENTITY))
+-- 
+GitLab
+
+From 565e37ca162385f0e13a1043aa4751518939d721 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Wed, 2 Nov 2016 16:14:54 +0300
+Subject: [PATCH] Unify QWidget and QML code paths
+
+---
+ src/qquick-dialog.cpp          | 19 ---------------
+ src/qquick-dialog.h            |  2 --
+ src/request.cpp                | 43 ++++++++++++++++++++--------------
+ src/request.h                  |  1 +
+ src/ubuntu-browser-request.cpp |  6 ++---
+ 5 files changed, 29 insertions(+), 42 deletions(-)
+
+diff --git a/src/qquick-dialog.cpp b/src/qquick-dialog.cpp
+index 40b78b6..8191768 100644
+--- a/src/qquick-dialog.cpp
++++ b/src/qquick-dialog.cpp
+@@ -18,9 +18,6 @@
+  * with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#define HAS_FOREIGN_QWINDOW (QT_VERSION >= QT_VERSION_CHECK(5, 1, 0) || \
+-                             defined(FORCE_FOREIGN_QWINDOW))
+-
+ #include "qquick-dialog.h"
+ 
+ #include "debug.h"
+@@ -39,22 +36,6 @@ Dialog::~Dialog()
+ {
+ }
+ 
+-void Dialog::show(WId parent, ShowMode mode)
+-{
+-    create();
+-#if HAS_FOREIGN_QWINDOW
+-    if (mode != TopLevel) {
+-        QWindow *parentWindow = QWindow::fromWinId(parent);
+-        if (mode == Transient) {
+-            setTransientParent(parentWindow);
+-        } else if (mode == Embedded) {
+-            setParent(parentWindow);
+-        }
+-    }
+-#endif
+-    QQuickView::show();
+-}
+-
+ void Dialog::accept()
+ {
+     done(Dialog::Accepted);
+diff --git a/src/qquick-dialog.h b/src/qquick-dialog.h
+index 884eded..c2aae31 100644
+--- a/src/qquick-dialog.h
++++ b/src/qquick-dialog.h
+@@ -45,8 +45,6 @@ public:
+     explicit Dialog(QWindow *parent = 0);
+     ~Dialog();
+ 
+-    void show(WId parent, ShowMode mode);
+-
+ public Q_SLOTS:
+     void accept();
+     void reject();
+diff --git a/src/request.cpp b/src/request.cpp
+index 521fcff..09210b6 100644
+--- a/src/request.cpp
++++ b/src/request.cpp
+@@ -80,7 +80,7 @@ private Q_SLOTS:
+     void onIndicatorCallFinished(QDBusPendingCallWatcher *watcher);
+ 
+ private:
+-    void setWidget(QWidget *widget);
++    bool setWindow(QWindow *window);
+     Accounts::Account *findAccount();
+     bool dispatchToIndicator();
+     void onIndicatorCallSucceeded();
+@@ -93,7 +93,7 @@ private:
+     QVariantMap m_clientData;
+     bool m_inProgress;
+     Accounts::Manager *m_accountManager;
+-    QPointer<QWidget> m_widget;
++    QPointer<QWindow> m_window;
+ };
+ 
+ } // namespace
+@@ -109,7 +109,7 @@ RequestPrivate::RequestPrivate(const QDBusConnection &connection,
+     m_parameters(parameters),
+     m_inProgress(false),
+     m_accountManager(0),
+-    m_widget(0)
++    m_window(0)
+ {
+     if (parameters.contains(SSOUI_KEY_CLIENT_DATA)) {
+         QVariant variant = parameters[SSOUI_KEY_CLIENT_DATA];
+@@ -123,40 +123,41 @@ RequestPrivate::~RequestPrivate()
+ {
+ }
+ 
+-void RequestPrivate::setWidget(QWidget *widget)
++bool RequestPrivate::setWindow(QWindow *window)
+ {
+-    if (m_widget != 0) {
++    if (m_window != 0) {
+         BLAME() << "Widget already set";
+-        return;
++        return false;
+     }
+ 
+-    m_widget = widget;
++    m_window = window;
+ 
+ #if HAS_FOREIGN_QWINDOW
+     if (embeddedUi() && windowId() != 0) {
+         TRACE() << "Requesting window embedding";
+         QWindow *host = QWindow::fromWinId(windowId());
+-        widget->show();
+-        widget->windowHandle()->setParent(host);
+-        return;
++        window->show();
++        window->setParent(host);
++        return true;
+     }
+ #endif
+ 
+     /* If the window has no parent and the webcredentials indicator service is
+      * up, dispatch the request to it. */
+     if (windowId() == 0 && dispatchToIndicator()) {
+-        return;
++        return false;
+     }
+ 
+-    widget->setWindowModality(Qt::WindowModal);
+-    widget->show();
++    window->setModality(Qt::WindowModal);
++    window->show();
+ #if HAS_FOREIGN_QWINDOW
+     if (windowId() != 0) {
+         TRACE() << "Requesting window reparenting";
+         QWindow *parent = QWindow::fromWinId(windowId());
+-        widget->windowHandle()->setTransientParent(parent);
++        window->setTransientParent(parent);
+     }
+ #endif
++    return true;
+ }
+ 
+ Accounts::Account *RequestPrivate::findAccount()
+@@ -237,8 +238,8 @@ void RequestPrivate::onIndicatorCallFinished(QDBusPendingCallWatcher *watcher)
+     if (watcher->isError()) {
+         /* if the notification could not be delivered to the indicator, show
+          * the widget. */
+-        if (m_widget != 0)
+-            m_widget->show();
++        if (m_window != 0)
++            m_window->show();
+     } else {
+         onIndicatorCallSucceeded();
+     }
+@@ -304,7 +305,15 @@ QString Request::id() const
+ void Request::setWidget(QWidget *widget)
+ {
+     Q_D(Request);
+-    d->setWidget(widget);
++    if (d->setWindow(widget->windowHandle())) {
++        widget->show();
++    }
++}
++
++void Request::setWindow(QWindow *window)
++{
++    Q_D(Request);
++    d->setWindow(window);
+ }
+ 
+ uint Request::identity() const
+diff --git a/src/request.h b/src/request.h
+index f2f5315..06f40e9 100644
+--- a/src/request.h
++++ b/src/request.h
+@@ -70,6 +70,7 @@ protected:
+                      QObject *parent = 0);
+ 
+     void setWidget(QWidget *widget);
++    void setWindow(QWindow *window);
+ 
+ protected Q_SLOTS:
+     void fail(const QString &name, const QString &message);
+diff --git a/src/ubuntu-browser-request.cpp b/src/ubuntu-browser-request.cpp
+index 4387889..10f3270 100644
+--- a/src/ubuntu-browser-request.cpp
++++ b/src/ubuntu-browser-request.cpp
+@@ -190,7 +190,7 @@ void UbuntuBrowserRequestPrivate::onLoadStarted()
+ 
+ void UbuntuBrowserRequestPrivate::onLoadFinished(bool ok)
+ {
+-    Q_Q(const UbuntuBrowserRequest);
++    Q_Q(UbuntuBrowserRequest);
+ 
+     TRACE() << "Load finished" << ok;
+ 
+@@ -201,9 +201,7 @@ void UbuntuBrowserRequestPrivate::onLoadFinished(bool ok)
+ 
+     if (!m_dialog->isVisible()) {
+         if (m_responseUrl.isEmpty()) {
+-            Dialog::ShowMode mode = (q->windowId() == 0) ? Dialog::TopLevel :
+-                q->embeddedUi() ? Dialog::Embedded : Dialog::Transient;
+-            m_dialog->show(q->windowId(), mode);
++            q->setWindow(m_dialog);
+         } else {
+             onFinished();
+         }
+-- 
+GitLab
+
+From fdb20a0b0f194bc5a45f8de3dabc7641151d9bfe Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Fri, 4 Nov 2016 12:23:03 +0300
+Subject: [PATCH] Use QT logging categories
+
+---
+ src/debug.cpp |  8 ++++++++
+ src/debug.h   | 27 +++++++--------------------
+ 2 files changed, 15 insertions(+), 20 deletions(-)
+
+diff --git a/src/debug.cpp b/src/debug.cpp
+index 5c72a88..9fb69bc 100644
+--- a/src/debug.cpp
++++ b/src/debug.cpp
+@@ -20,10 +20,18 @@
+ 
+ #include "debug.h"
+ 
++Q_LOGGING_CATEGORY(DBG_SIGNON_UI, "signon", QtWarningMsg)
++
+ int appLoggingLevel = 1; // criticals
+ 
+ void setLoggingLevel(int level)
+ {
++    if (level >= 1) {
++        QLoggingCategory::setFilterRules("signon.warning=true");
++        if (level >= 2) {
++            QLoggingCategory::setFilterRules("signon.debug=true");
++        }
++    }
+     appLoggingLevel = level;
+ }
+ 
+diff --git a/src/debug.h b/src/debug.h
+index 2725073..0efa713 100644
+--- a/src/debug.h
++++ b/src/debug.h
+@@ -20,21 +20,13 @@
+ #ifndef SIGNON_UI_DEBUG_H
+ #define SIGNON_UI_DEBUG_H
+ 
+-#include <QDebug>
++#include <QLoggingCategory>
++
++Q_DECLARE_LOGGING_CATEGORY(DBG_SIGNON_UI)
+ 
+ /* 0 - fatal, 1 - critical(default), 2 - info/debug */
+ extern int appLoggingLevel;
+ 
+-static inline bool debugEnabled()
+-{
+-    return appLoggingLevel >= 2;
+-}
+-
+-static inline bool criticalsEnabled()
+-{
+-    return appLoggingLevel >= 1;
+-}
+-
+ static inline int loggingLevel()
+ {
+     return appLoggingLevel;
+@@ -42,15 +34,10 @@ static inline int loggingLevel()
+ 
+ void setLoggingLevel(int level);
+ 
+-#ifdef DEBUG_ENABLED
+-    #define TRACE() \
+-        if (debugEnabled()) qDebug() << __FILE__ << __LINE__ << __func__
+-    #define BLAME() \
+-        if (criticalsEnabled()) qCritical() << __FILE__ << __LINE__ << __func__
+-#else
+-    #define TRACE() while (0) qDebug()
+-    #define BLAME() while (0) qDebug()
+-#endif
++#define TRACE() \
++    qCDebug(DBG_SIGNON_UI) << __FILE__ << __LINE__ << __func__
++#define BLAME() \
++    qCWarning(DBG_SIGNON_UI) << __FILE__ << __LINE__ << __func__
+ 
+ #endif // SIGNON_UI_DEBUG_H
+ 
+-- 
+GitLab
+
+From 79d6d672564012af31cf20f3515ffd64edc787a2 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <alberto.mardegan@canonical.com>
+Date: Mon, 20 Mar 2017 11:59:34 +0300
+Subject: [PATCH] Unity7 session got renamed
+
+---
+ src/request.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/request.cpp b/src/request.cpp
+index 09210b6..59154eb 100644
+--- a/src/request.cpp
++++ b/src/request.cpp
+@@ -266,7 +266,7 @@ Request *Request::newRequest(const QDBusConnection &connection,
+ #ifdef USE_UBUNTU_WEB_VIEW
+         TRACE() << "Platform:" << QGuiApplication::platformName();
+         if (QGuiApplication::platformName().startsWith("ubuntu") ||
+-            qgetenv("XDG_CURRENT_DESKTOP") == QByteArray("Unity") ||
++            qgetenv("XDG_CURRENT_DESKTOP").startsWith("Unity") ||
+             qgetenv("SSOUI_USE_UBUNTU_WEB_VIEW") == QByteArray("1")) {
+             return new UbuntuBrowserRequest(connection, message,
+                                             parameters, parent);
+-- 
+GitLab
+
+From 6cfd38301fe87d97a4af74261b3e0e76c22f273c Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <amardegan@luxoft.com>
+Date: Sun, 22 Oct 2017 15:54:57 +0300
+Subject: [PATCH] Use WebEngineView instead of Ubuntu browser
+
+---
+ src/main.cpp                   |  3 +++
+ src/qml/DefaultPage.qml        | 17 +++++++----------
+ src/qml/MainWindow.qml         |  5 ++---
+ src/qml/ProgressBar.qml        | 13 +++++++++++++
+ src/qml/WebView.qml            | 24 +++++++++++++-----------
+ src/qml/qml.qrc                |  1 +
+ src/signon-ui.pro              |  1 +
+ src/ubuntu-browser-request.cpp |  1 +
+ 8 files changed, 41 insertions(+), 24 deletions(-)
+ create mode 100644 src/qml/ProgressBar.qml
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 2a8ca7c..6e58faa 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -29,6 +29,7 @@
+ #include <QDBusConnection>
+ #include <QProcessEnvironment>
+ #include <QSettings>
++#include <QtWebEngine>
+ 
+ using namespace SignOnUi;
+ 
+@@ -39,6 +40,8 @@ static const char objectPath[] = "/SignonUi";
+ int main(int argc, char **argv)
+ {
+     QApplication app(argc, argv);
++    QtWebEngine::initialize();
++
+     app.setApplicationName("signon-ui");
+     app.setQuitOnLastWindowClosed(false);
+ 
+diff --git a/src/qml/DefaultPage.qml b/src/qml/DefaultPage.qml
+index 3d49997..f0f3eca 100644
+--- a/src/qml/DefaultPage.qml
++++ b/src/qml/DefaultPage.qml
+@@ -1,14 +1,11 @@
+ import QtQuick 2.0
+-import Ubuntu.Components 1.3
+ 
+-Page {
+-    Loader {
+-        id: loader
+-        anchors {
+-            fill: parent
+-            bottomMargin: osk.height
+-        }
+-        focus: true
+-        sourceComponent: browserComponent
++Loader {
++    id: loader
++    anchors {
++        fill: parent
++        bottomMargin: osk.height
+     }
++    focus: true
++    sourceComponent: browserComponent
+ }
+diff --git a/src/qml/MainWindow.qml b/src/qml/MainWindow.qml
+index a55ca48..77d3775 100644
+--- a/src/qml/MainWindow.qml
++++ b/src/qml/MainWindow.qml
+@@ -1,10 +1,9 @@
+ import QtQuick 2.0
+-import Ubuntu.Components 1.3
+ 
+ Item {
+     id: root
+-    width: units.gu(60)
+-    height: units.gu(90)
++    width: 600
++    height: 400
+     property var signonRequest: request
+ 
+     Loader {
+diff --git a/src/qml/ProgressBar.qml b/src/qml/ProgressBar.qml
+new file mode 100644
+index 0000000..c65cc1b
+--- /dev/null
++++ b/src/qml/ProgressBar.qml
+@@ -0,0 +1,13 @@
++import QtQuick 2.0
++
++Item {
++    id: root
++
++    property real value: 0
++
++    Rectangle {
++        anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
++        color: "red"
++        width: root.value * root.width
++    }
++}
+diff --git a/src/qml/WebView.qml b/src/qml/WebView.qml
+index 339a2af..33462b8 100644
+--- a/src/qml/WebView.qml
++++ b/src/qml/WebView.qml
+@@ -1,35 +1,37 @@
+ import QtQuick 2.0
+-import Ubuntu.Components 1.3
+-import Ubuntu.Web 0.2
++import QtWebEngine 1.1
+ 
+-WebView {
++WebEngineView {
+     id: root
+ 
++    property bool lastLoadFailed: false
++
+     Component.onCompleted: url = signonRequest.startUrl
+ 
+-    onLoadingStateChanged: {
++    onLoadingChanged: {
+         console.log("Loading changed")
+         if (loading && !lastLoadFailed) {
+             signonRequest.onLoadStarted()
+-        } else if (lastLoadSucceeded) {
++        } else if (loadRequest.status == WebEngineView.LoadSucceededStatus) {
++            lastLoadFailed = false
+             signonRequest.onLoadFinished(true)
+-        } else if (lastLoadFailed) {
++        } else if (loadRequest.status == WebEngineView.LoadFailedStatus) {
++            lastLoadFailed = true
+             signonRequest.onLoadFinished(false)
+         }
+     }
+     onUrlChanged: signonRequest.currentUrl = url
+ 
+-    context: WebContext {
+-        dataPath: rootDir
++    profile: WebEngineProfile {
++        cachePath: rootDir
++        persistentStoragePath: rootDir
+     }
+ 
+-    /* Taken from webbrowser-app */
+     ProgressBar {
+         anchors.top: parent.top
+         anchors.left: parent.left
+         anchors.right: parent.right
+-        height: units.dp(3)
+-        showProgressPercentage: false
++        height: 6
+         visible: root.loading
+         value: root.loadProgress / 100
+     }
+diff --git a/src/qml/qml.qrc b/src/qml/qml.qrc
+index c43e1c6..627298b 100644
+--- a/src/qml/qml.qrc
++++ b/src/qml/qml.qrc
+@@ -3,6 +3,7 @@
+         <file>DefaultPage.qml</file>
+         <file>KeyboardRectangle.qml</file>
+         <file>MainWindow.qml</file>
++        <file>ProgressBar.qml</file>
+         <file>StandardAnimation.qml</file>
+         <file>WebView.qml</file>
+     </qresource>
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index 7064189..fc7c33e 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -17,6 +17,7 @@ QT += \
+     gui \
+     network \
+     quick \
++    webengine \
+     webkit
+ 
+ PKGCONFIG += \
+diff --git a/src/ubuntu-browser-request.cpp b/src/ubuntu-browser-request.cpp
+index 10f3270..fe17828 100644
+--- a/src/ubuntu-browser-request.cpp
++++ b/src/ubuntu-browser-request.cpp
+@@ -2,6 +2,7 @@
+  * This file is part of signon-ui
+  *
+  * Copyright (C) 2013 Canonical Ltd.
++ * Copyright (C) 2017 Alberto Mardegan
+  *
+  * Contact: Alberto Mardegan <alberto.mardegan@canonical.com>
+  *
+-- 
+GitLab
+
+From f1286b9a4bcc9eafc3cf8dfa0d43eed58e39558c Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <amardegan@luxoft.com>
+Date: Sun, 22 Oct 2017 16:08:08 +0300
+Subject: [PATCH] Remove Webkit1 browser request, use Webkit2 on all platforms
+
+---
+ src/browser-request.cpp      | 826 -----------------------------------
+ src/browser-request.h        |  54 ---
+ src/request.cpp              |  17 +-
+ src/signon-ui.pro            |  53 +--
+ tests/unit/tst_signon_ui.pro |   9 +-
+ 5 files changed, 30 insertions(+), 929 deletions(-)
+ delete mode 100644 src/browser-request.cpp
+ delete mode 100644 src/browser-request.h
+
+diff --git a/src/browser-request.cpp b/src/browser-request.cpp
+deleted file mode 100644
+index 9da9685..0000000
+--- a/src/browser-request.cpp
++++ /dev/null
+@@ -1,826 +0,0 @@
+-/*
+- * This file is part of signon-ui
+- *
+- * Copyright (C) 2011 Canonical Ltd.
+- *
+- * Contact: Alberto Mardegan <alberto.mardegan@canonical.com>
+- *
+- * This program is free software: you can redistribute it and/or modify it
+- * under the terms of the GNU General Public License version 3, as published
+- * by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranties of
+- * MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
+- * PURPOSE.  See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along
+- * with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#include "browser-request.h"
+-
+-#include "animation-label.h"
+-#include "cookie-jar-manager.h"
+-#include "debug.h"
+-#include "dialog.h"
+-#include "http-warning.h"
+-#include "i18n.h"
+-
+-#include <QDBusArgument>
+-#include <QDesktopServices>
+-#include <QIcon>
+-#include <QLabel>
+-#include <QNetworkCookie>
+-#include <QNetworkReply>
+-#include <QNetworkRequest>
+-#include <QPixmap>
+-#include <QPointer>
+-#include <QProgressBar>
+-#include <QPushButton>
+-#include <QRegExp>
+-#include <QSettings>
+-#include <QSslError>
+-#include <QStackedLayout>
+-#include <QStatusBar>
+-#include <QTimer>
+-#include <QVBoxLayout>
+-#include <QWebElement>
+-#include <QWebFrame>
+-#include <QWebView>
+-#include <SignOn/uisessiondata_priv.h>
+-
+-using namespace SignOnUi;
+-
+-namespace SignOnUi {
+-
+-static const QString keyPreferredWidth = QString("PreferredWidth");
+-static const QString keyHorizontalScrollBar = QString("HorizontalScrollBar");
+-static const QString keyVerticalScrollBar = QString("VerticalScrollBar");
+-static const QString keyTextSizeMultiplier = QString("TextSizeMultiplier");
+-static const QString keyUserAgent = QString("UserAgent");
+-static const QString keyViewportWidth = QString("ViewportWidth");
+-static const QString keyViewportHeight = QString("ViewportHeight");
+-static const QString keyZoomFactor = QString("ZoomFactor");
+-static const QString keyUsernameField = QString("UsernameField");
+-static const QString keyPasswordField = QString("PasswordField");
+-static const QString keyLoginButton = QString("LoginButton");
+-static const QString keyInternalLinksPattern = QString("InternalLinksPattern");
+-static const QString keyExternalLinksPattern = QString("ExternalLinksPattern");
+-static const QString keyAllowedUrls = QString("AllowedUrls");
+-static const QString valueAlwaysOn = QString("alwaysOn");
+-static const QString valueAlwaysOff = QString("alwaysOff");
+-
+-/* Additional session-data keys we support. */
+-static const QString keyCookies = QString("Cookies");
+-static const QString keyAllowedSchemes = QString("AllowedSchemes");
+-static const QString keyIgnoreSslErrors = QString("IgnoreSslErrors");
+-
+-static bool pathsAreEqual(const QString &p1, const QString &p2)
+-{
+-    static QRegExp regExp("/*$");
+-    QString p1copy(p1);
+-    QString p2copy(p2);
+-    return p1copy.remove(regExp) == p2copy.remove(regExp);
+-}
+-
+-class WebPage: public QWebPage
+-{
+-    Q_OBJECT
+-
+-public:
+-    WebPage(QObject *parent = 0): QWebPage(parent) {}
+-    ~WebPage() {}
+-
+-    void setUserAgent(const QString &userAgent) { m_userAgent = userAgent; }
+-
+-    void setExternalLinksPattern(const QString &pattern) {
+-        m_externalLinksPattern =
+-            QRegExp(pattern, Qt::CaseInsensitive, QRegExp::RegExp2);
+-    }
+-
+-    void setInternalLinksPattern(const QString &pattern) {
+-        m_internalLinksPattern =
+-            QRegExp(pattern, Qt::CaseInsensitive, QRegExp::RegExp2);
+-    }
+-
+-    void setAllowedSchemes(const QStringList &schemes) {
+-        m_allowedSchemes = schemes;
+-    }
+-
+-    void setAllowedUrls(const QString &pattern) {
+-        m_allowedUrls =
+-            QRegExp(pattern, Qt::CaseInsensitive, QRegExp::RegExp2);
+-    }
+-
+-    void setFinalUrl(const QUrl &url) { m_finalUrl = url; }
+-
+-protected:
+-    // reimplemented virtual methods
+-    QString userAgentForUrl(const QUrl &url) const
+-    {
+-        return m_userAgent.isEmpty() ?
+-            QWebPage::userAgentForUrl(url) : m_userAgent;
+-    }
+-
+-    bool acceptNavigationRequest(QWebFrame *frame,
+-                                 const QNetworkRequest &request,
+-                                 NavigationType type)
+-    {
+-        Q_UNUSED(type);
+-
+-        QUrl url = request.url();
+-        TRACE() << url;
+-
+-        /* We generally don't need to load the final URL, so skip loading it.
+-         * If this behaviour is not desired for some requests, then just avoid
+-         * calling setFinalUrl() */
+-        if (url.host() == m_finalUrl.host() &&
+-            pathsAreEqual(url.path(), m_finalUrl.path())) {
+-            Q_EMIT finalUrlReached(url);
+-            return false;
+-        }
+-
+-        /* open all new window requests (identified by "frame == 0") in the
+-         * external browser, as well as other links according to the
+-         * ExternalLinksPattern and InternalLinksPattern rules. */
+-        if (frame == 0 || urlIsBlocked(url)) {
+-            QDesktopServices::openUrl(url);
+-            return false;
+-        }
+-        /* Handle all other requests internally. */
+-        return true;
+-    }
+-
+-Q_SIGNALS:
+-    void finalUrlReached(const QUrl &url);
+-
+-private:
+-    bool urlIsBlocked(QUrl url) const;
+-
+-private:
+-    QString m_userAgent;
+-    QRegExp m_externalLinksPattern;
+-    QRegExp m_internalLinksPattern;
+-    QStringList m_allowedSchemes;
+-    QRegExp m_allowedUrls;
+-    QUrl m_finalUrl;
+-};
+-
+-bool WebPage::urlIsBlocked(QUrl url) const {
+-    if (url == QUrl("about:blank")) return false;
+-
+-    if (!m_allowedSchemes.contains(url.scheme())) {
+-        TRACE() << "Scheme not allowed:" << url.scheme();
+-        return true;
+-    }
+-
+-    if (!m_allowedUrls.isEmpty() &&
+-        !m_allowedUrls.exactMatch(url.toString())) {
+-        TRACE() << "URL not allowed:" << url;
+-        return true;
+-    }
+-
+-    QString urlText = url.toString(QUrl::RemoveScheme |
+-                                   QUrl::RemoveUserInfo |
+-                                   QUrl::RemoveFragment |
+-                                   QUrl::StripTrailingSlash);
+-    if (urlText.startsWith("//")) {
+-        urlText = urlText.mid(2);
+-    }
+-
+-    if (!m_internalLinksPattern.isEmpty()) {
+-        return !m_internalLinksPattern.exactMatch(urlText);
+-    }
+-
+-    if (!m_externalLinksPattern.isEmpty()) {
+-        return m_externalLinksPattern.exactMatch(urlText);
+-    }
+-
+-    return false;
+-}
+-
+-class WebView: public QWebView
+-{
+-    Q_OBJECT
+-
+-public:
+-    WebView(QWidget *parent = 0):
+-        QWebView(parent)
+-    {
+-        setSizePolicy(QSizePolicy::MinimumExpanding,
+-                      QSizePolicy::MinimumExpanding);
+-        setAttribute(Qt::WA_OpaquePaintEvent, true);
+-    }
+-    ~WebView() {};
+-
+-    void setPreferredSize(const QSize &size) {
+-        m_preferredSize = size;
+-        updateGeometry();
+-    }
+-
+-protected:
+-    QSize sizeHint() const {
+-        if (m_preferredSize.isValid()) {
+-            return m_preferredSize;
+-        } else {
+-            return QSize(400, 300);
+-        }
+-    }
+-
+-    void paintEvent(QPaintEvent *event) {
+-        QPainter painter(this);
+-        painter.fillRect(rect(), palette().window());
+-        QWebView::paintEvent(event);
+-    }
+-
+-private:
+-    QSize m_preferredSize;
+-};
+-
+-class BrowserRequestPrivate: public QObject
+-{
+-    Q_OBJECT
+-    Q_DECLARE_PUBLIC(BrowserRequest)
+-
+-public:
+-    BrowserRequestPrivate(BrowserRequest *request);
+-    ~BrowserRequestPrivate();
+-
+-    QWidget *buildWebViewPage(const QVariantMap &params);
+-    QWidget *buildSuccessPage();
+-    QWidget *buildLoadFailurePage();
+-    void buildDialog(const QVariantMap &params);
+-    void start();
+-
+-private Q_SLOTS:
+-    void onSslErrors(QNetworkReply *reply, const QList<QSslError> &errors);
+-    void onRequestFinished(QNetworkReply *reply);
+-    void onUrlChanged(const QUrl &url);
+-    void onLoadProgress();
+-    void onLoadFinished(bool ok);
+-    void onFailTimer();
+-    void onFinished();
+-    void startProgress();
+-    void stopProgress();
+-    void onContentsChanged();
+-
+-private:
+-    void showDialog();
+-    void setupViewForUrl(const QUrl &url);
+-    void notifyAuthCompleted();
+-    void notifyLoadFailed();
+-    QWebElement initializeField(const QString &settingsKey,
+-                                const QString &paramKey = QString());
+-    void initializeFields();
+-    bool tryAutoLogin();
+-    void addBrowserCookies(CookieJar *cookieJar);
+-
+-private:
+-    mutable BrowserRequest *q_ptr;
+-    /* The dialog can be deleted by the Request class, if it's set as children
+-     * of an embedded widget which is then deleted. Therefore, in order to
+-     * avoid a double deletion, guard the pointer with a QPointer. */
+-    QPointer<Dialog> m_dialog;
+-    QStackedLayout *m_dialogLayout;
+-    QWidget *m_webViewPage;
+-    QWidget *m_successPage;
+-    QWidget *m_loadFailurePage;
+-    QStackedLayout *m_webViewLayout;
+-    WebView *m_webView;
+-    AnimationLabel *m_animationLabel;
+-    HttpWarning *m_httpWarning;
+-    QUrl finalUrl;
+-    QUrl responseUrl;
+-    QString m_host;
+-    QSettings *m_settings;
+-    QWebElement m_usernameField;
+-    QWebElement m_passwordField;
+-    QWebElement m_loginButton;
+-    QString m_username;
+-    QString m_password;
+-    int m_loginCount;
+-    bool m_ignoreSslErrors;
+-    QTimer m_failTimer;
+-};
+-
+-} // namespace
+-
+-BrowserRequestPrivate::BrowserRequestPrivate(BrowserRequest *request):
+-    QObject(request),
+-    q_ptr(request),
+-    m_dialog(0),
+-    m_webViewLayout(0),
+-    m_webView(0),
+-    m_animationLabel(0),
+-    m_httpWarning(0),
+-    m_settings(0),
+-    m_loginCount(0),
+-    m_ignoreSslErrors(false)
+-{
+-    m_failTimer.setSingleShot(true);
+-    m_failTimer.setInterval(3000);
+-    QObject::connect(&m_failTimer, SIGNAL(timeout()),
+-                     this, SLOT(onFailTimer()));
+-}
+-
+-BrowserRequestPrivate::~BrowserRequestPrivate()
+-{
+-    delete m_dialog;
+-}
+-
+-void BrowserRequestPrivate::onSslErrors(QNetworkReply *reply,
+-                                        const QList<QSslError> &errors)
+-{
+-    TRACE() << errors;
+-    if (m_ignoreSslErrors) {
+-        reply->ignoreSslErrors();
+-    }
+-}
+-
+-void BrowserRequestPrivate::onRequestFinished(QNetworkReply *reply)
+-{
+-    if (reply->error() != QNetworkReply::NoError) {
+-        TRACE() << "The last request finished with error code"
+-                << reply->error() << "-" << reply->errorString();
+-    }
+-}
+-
+-void BrowserRequestPrivate::onUrlChanged(const QUrl &url)
+-{
+-    Q_Q(BrowserRequest);
+-
+-    TRACE() << "Url changed:" << url;
+-    m_failTimer.stop();
+-
+-    if (url.host() == finalUrl.host() &&
+-        pathsAreEqual(url.path(), finalUrl.path())) {
+-        responseUrl = url;
+-        if (q->embeddedUi() || !m_dialog->isVisible()) {
+-            /* Do not show the notification page. */
+-            m_dialog->accept();
+-        } else {
+-            /* Replace the web page with an information screen */
+-            notifyAuthCompleted();
+-        }
+-    }
+-
+-    setupViewForUrl(url);
+-    m_httpWarning->setVisible(url.scheme() == "http");
+-}
+-
+-void BrowserRequestPrivate::onLoadProgress()
+-{
+-    m_failTimer.stop();
+-}
+-
+-void BrowserRequestPrivate::onLoadFinished(bool ok)
+-{
+-    TRACE() << "Load finished" << ok;
+-
+-    if (!ok) {
+-        m_failTimer.start();
+-        return;
+-    }
+-
+-    if (loggingLevel() > 2) {
+-        /* Dump the HTML */
+-        TRACE() << m_webView->page()->mainFrame()->toHtml();
+-    }
+-
+-    initializeFields();
+-
+-    if (!m_dialog->isVisible()) {
+-        if (responseUrl.isEmpty()) {
+-            if (!tryAutoLogin())
+-                showDialog();
+-        } else {
+-            onFinished();
+-        }
+-    }
+-}
+-
+-void BrowserRequestPrivate::onFailTimer()
+-{
+-    notifyLoadFailed();
+-}
+-
+-void BrowserRequestPrivate::addBrowserCookies(CookieJar *cookieJar)
+-{
+-    Q_Q(BrowserRequest);
+-
+-    const QVariantMap &clientData = q->clientData();
+-    if (!clientData.contains(keyCookies)) return;
+-
+-    RawCookies rawCookies;
+-    QDBusArgument arg = clientData[keyCookies].value<QDBusArgument>();
+-    if (arg.currentSignature() == "a{sv}") {
+-        /* The signature of the argument should be "a{ss}", not "a{sv}";
+-         * however, ruby-dbus is rather primitive and there seems to be no way
+-         * to speficy a different signature than "a{sv}" when marshalling Hash
+-         * into a variant.
+-         * Therefore, just for our functional tests, also support "a{sv}".
+-         */
+-        QVariantMap cookieMap = qdbus_cast<QVariantMap>(arg);
+-        QVariantMap::const_iterator i;
+-        for (i = cookieMap.constBegin(); i != cookieMap.constEnd(); i++) {
+-            rawCookies.insert(i.key(), i.value().toString());
+-        }
+-    } else {
+-        rawCookies = qdbus_cast<RawCookies>(arg);
+-    }
+-
+-    QList<QNetworkCookie> cookies;
+-    RawCookies::const_iterator i;
+-    for (i = rawCookies.constBegin(); i != rawCookies.constEnd(); i++) {
+-        cookies.append(QNetworkCookie::parseCookies(i.value().toUtf8()));
+-    }
+-
+-    TRACE() << "cookies:" << cookies;
+-    cookieJar->setCookies(cookies);
+-}
+-
+-void BrowserRequestPrivate::startProgress()
+-{
+-    m_animationLabel->start();
+-    m_webViewLayout->setCurrentIndex(1);
+-}
+-
+-void BrowserRequestPrivate::stopProgress()
+-{
+-    m_animationLabel->stop();
+-    m_webViewLayout->setCurrentIndex(0);
+-}
+-
+-QWidget *BrowserRequestPrivate::buildWebViewPage(const QVariantMap &params)
+-{
+-    Q_Q(BrowserRequest);
+-
+-    QWidget *dialogPage = new QWidget;
+-    m_webViewLayout = new QStackedLayout(dialogPage);
+-
+-    m_webView = new WebView();
+-    WebPage *page = new WebPage(this);
+-    QObject::connect(page, SIGNAL(contentsChanged()),
+-                     this, SLOT(onContentsChanged()));
+-    QObject::connect(page->networkAccessManager(),
+-                     SIGNAL(sslErrors(QNetworkReply*,const QList<QSslError> &)),
+-                     this, SLOT(onSslErrors(QNetworkReply*,const QList<QSslError> &)));
+-    QObject::connect(page->networkAccessManager(), SIGNAL(finished(QNetworkReply*)),
+-                     this, SLOT(onRequestFinished(QNetworkReply*)));
+-    m_webView->setPage(page);
+-
+-    /* The following couple of lines serve to instruct the QWebPage not to load
+-     * the final URL, but to block it and emit the finalUrlReached() signal
+-     * instead.
+-     */
+-    page->setFinalUrl(finalUrl);
+-    QObject::connect(page, SIGNAL(finalUrlReached(const QUrl&)),
+-                     this, SLOT(onUrlChanged(const QUrl&)));
+-
+-    /* set a per-identity cookie jar on the page */
+-    uint identity = q->identity();
+-    CookieJarManager *cookieJarManager = CookieJarManager::instance();
+-    CookieJar *cookieJar = cookieJarManager->cookieJarForIdentity(identity);
+-    addBrowserCookies(cookieJar);
+-    page->networkAccessManager()->setCookieJar(cookieJar);
+-    /* NetworkAccessManager takes ownership of the cookieJar; we don't want
+-     * this */
+-    cookieJar->setParent(cookieJarManager);
+-
+-    const QVariantMap &clientData = q->clientData();
+-    if (clientData.contains(keyAllowedSchemes)) {
+-        page->setAllowedSchemes(clientData[keyAllowedSchemes].toStringList());
+-    } else {
+-        /* by default, allow only https */
+-        page->setAllowedSchemes(QStringList("https"));
+-    }
+-
+-    m_ignoreSslErrors = clientData.value(keyIgnoreSslErrors, false).toBool();
+-
+-    QUrl url(params.value(SSOUI_KEY_OPENURL).toString());
+-    setupViewForUrl(url);
+-    QObject::connect(m_webView, SIGNAL(urlChanged(const QUrl&)),
+-                     this, SLOT(onUrlChanged(const QUrl&)));
+-    QObject::connect(m_webView, SIGNAL(loadProgress(int)),
+-                     this, SLOT(onLoadProgress()));
+-    QObject::connect(m_webView, SIGNAL(loadFinished(bool)),
+-                     this, SLOT(onLoadFinished(bool)));
+-    QWidget *webViewContainer = new QWidget;
+-    QVBoxLayout *vLayout = new QVBoxLayout;
+-    vLayout->setSpacing(0);
+-    webViewContainer->setLayout(vLayout);
+-    vLayout->addWidget(m_webView);
+-
+-    m_httpWarning = new HttpWarning;
+-    m_httpWarning->setVisible(false);
+-    vLayout->addWidget(m_httpWarning);
+-
+-    m_webViewLayout->addWidget(webViewContainer);
+-
+-    m_animationLabel = new AnimationLabel(":/spinner-26.gif", 0);
+-    QObject::connect(m_webView, SIGNAL(loadStarted()),
+-                     this, SLOT(startProgress()));
+-    QObject::connect(m_webView, SIGNAL(loadFinished(bool)),
+-                     this, SLOT(stopProgress()));
+-    m_webViewLayout->addWidget(m_animationLabel);
+-    m_webView->setUrl(url);
+-
+-    return dialogPage;
+-}
+-
+-QWidget *BrowserRequestPrivate::buildSuccessPage()
+-{
+-    QWidget *dialogPage = new QWidget;
+-    dialogPage->setSizePolicy(QSizePolicy::Ignored,
+-                              QSizePolicy::MinimumExpanding);
+-    QVBoxLayout *layout = new QVBoxLayout(dialogPage);
+-
+-    QLabel *label = new QLabel(_("The authentication process is complete.\n"
+-                                 "You may now close this dialog "
+-                                 "and return to the application."));
+-    label->setAlignment(Qt::AlignCenter);
+-    layout->addWidget(label);
+-
+-    QPushButton *doneButton = new QPushButton(_("Done"));
+-    doneButton->setDefault(true);
+-    QObject::connect(doneButton, SIGNAL(clicked()),
+-                     m_dialog, SLOT(accept()));
+-    layout->addWidget(doneButton);
+-
+-    return dialogPage;
+-}
+-
+-QWidget *BrowserRequestPrivate::buildLoadFailurePage()
+-{
+-    QWidget *dialogPage = new QWidget;
+-    dialogPage->setSizePolicy(QSizePolicy::Ignored,
+-                              QSizePolicy::MinimumExpanding);
+-    QVBoxLayout *layout = new QVBoxLayout(dialogPage);
+-
+-    QLabel *label = new QLabel(_("An error occurred while loading "
+-                                 "the authentication page."));
+-    label->setAlignment(Qt::AlignCenter);
+-    layout->addWidget(label);
+-
+-    return dialogPage;
+-}
+-
+-void BrowserRequestPrivate::buildDialog(const QVariantMap &params)
+-{
+-    m_dialog = new Dialog;
+-
+-    QString title;
+-    if (params.contains(SSOUI_KEY_TITLE)) {
+-        title = params[SSOUI_KEY_TITLE].toString();
+-    } else if (params.contains(SSOUI_KEY_CAPTION)) {
+-        title = _("Web authentication for %1").
+-            arg(params[SSOUI_KEY_CAPTION].toString());
+-    } else {
+-        title = _("Web authentication");
+-    }
+-
+-    m_dialog->setWindowTitle(title);
+-
+-    m_dialogLayout = new QStackedLayout(m_dialog);
+-
+-    m_webViewPage = buildWebViewPage(params);
+-    m_dialogLayout->addWidget(m_webViewPage);
+-
+-    m_successPage = buildSuccessPage();
+-    m_dialogLayout->addWidget(m_successPage);
+-
+-    m_loadFailurePage = buildLoadFailurePage();
+-    m_dialogLayout->addWidget(m_loadFailurePage);
+-
+-    TRACE() << "Dialog was built";
+-}
+-
+-void BrowserRequestPrivate::start()
+-{
+-    Q_Q(BrowserRequest);
+-
+-    finalUrl = QUrl(q->parameters().value(SSOUI_KEY_FINALURL).toString());
+-    buildDialog(q->parameters());
+-
+-    QObject::connect(m_dialog, SIGNAL(finished(int)),
+-                     this, SLOT(onFinished()));
+-
+-    if (q->embeddedUi()) {
+-        showDialog();
+-    }
+-}
+-
+-void BrowserRequestPrivate::onFinished()
+-{
+-    Q_Q(BrowserRequest);
+-
+-    TRACE() << "Browser dialog closed";
+-
+-    QObject::disconnect(m_webView, 0, this, 0);
+-
+-    QVariantMap reply;
+-    QUrl url = responseUrl.isEmpty() ? m_webView->url() : responseUrl;
+-    reply[SSOUI_KEY_URLRESPONSE] = url.toString();
+-
+-    if (!m_username.isEmpty())
+-        reply[SSOUI_KEY_USERNAME] = m_username;
+-    if (!m_password.isEmpty())
+-        reply[SSOUI_KEY_PASSWORD] = m_password;
+-
+-    q->setResult(reply);
+-}
+-
+-void BrowserRequestPrivate::onContentsChanged()
+-{
+-    /* See https://bugs.webkit.org/show_bug.cgi?id=32865 for the reason why
+-     * we are not simply calling m_usernameField.attribute("value")
+-     */
+-    if (!m_usernameField.isNull()) {
+-        m_username =
+-            m_usernameField.evaluateJavaScript("this.value").toString();
+-    }
+-    if (!m_passwordField.isNull()) {
+-        m_password =
+-            m_passwordField.evaluateJavaScript("this.value").toString();
+-    }
+-}
+-
+-void BrowserRequestPrivate::showDialog()
+-{
+-    Q_Q(BrowserRequest);
+-
+-    q->setWidget(m_dialog);
+-}
+-
+-static Qt::ScrollBarPolicy scrollPolicyFromValue(const QVariant &value)
+-{
+-    QString stringValue = value.toString();
+-    if (stringValue == valueAlwaysOn) {
+-        return Qt::ScrollBarAlwaysOn;
+-    } else if (stringValue == valueAlwaysOff) {
+-        return Qt::ScrollBarAlwaysOff;
+-    } else {
+-        return Qt::ScrollBarAsNeeded;
+-    }
+-}
+-
+-void BrowserRequestPrivate::setupViewForUrl(const QUrl &url)
+-{
+-    QString host = url.host();
+-    if (host == m_host) return;
+-
+-    m_host = host;
+-
+-    /* Load the host-specific configuration file */
+-    delete m_settings;
+-    m_settings = new QSettings("signon-ui/webkit-options.d/" + host, QString(), this);
+-
+-    WebPage *page = qobject_cast<WebPage *>(m_webView->page());
+-
+-    if (m_settings->contains(keyViewportWidth) &&
+-        m_settings->contains(keyViewportHeight)) {
+-        QSize viewportSize(m_settings->value(keyViewportWidth).toInt(),
+-                           m_settings->value(keyViewportHeight).toInt());
+-        m_webView->setPreferredSize(viewportSize);
+-    }
+-
+-    if (m_settings->contains(keyPreferredWidth)) {
+-        QSize preferredSize(m_settings->value(keyPreferredWidth).toInt(), 300);
+-        page->setPreferredContentsSize(preferredSize);
+-    }
+-
+-    if (m_settings->contains(keyTextSizeMultiplier)) {
+-        m_webView->setTextSizeMultiplier(m_settings->value(keyTextSizeMultiplier).
+-                                         toReal());
+-    }
+-
+-    if (m_settings->contains(keyUserAgent)) {
+-        page->setUserAgent(m_settings->value(keyUserAgent).toString());
+-    }
+-
+-    if (m_settings->contains(keyZoomFactor)) {
+-        m_webView->setZoomFactor(m_settings->value(keyZoomFactor).toReal());
+-    }
+-
+-    if (m_settings->contains(keyHorizontalScrollBar)) {
+-        Qt::ScrollBarPolicy policy =
+-            scrollPolicyFromValue(m_settings->value(keyHorizontalScrollBar));
+-        page->mainFrame()->setScrollBarPolicy(Qt::Horizontal, policy);
+-    }
+-
+-    if (m_settings->contains(keyVerticalScrollBar)) {
+-        Qt::ScrollBarPolicy policy =
+-            scrollPolicyFromValue(m_settings->value(keyVerticalScrollBar));
+-        page->mainFrame()->setScrollBarPolicy(Qt::Vertical, policy);
+-    }
+-
+-    page->setExternalLinksPattern(m_settings->value(keyExternalLinksPattern).
+-                                  toString());
+-    page->setInternalLinksPattern(m_settings->value(keyInternalLinksPattern).
+-                                  toString());
+-    page->setAllowedUrls(m_settings->value(keyAllowedUrls).toString());
+-}
+-
+-void BrowserRequestPrivate::notifyAuthCompleted()
+-{
+-    /* Ignore any webview signals from now on.
+-     * This is needed because QWebView might still emit loadFinished(false)
+-     * (which we would interpret as an error) on the final URL, which we don't
+-     * care about anymore. */
+-    QObject::disconnect(m_webView, 0, this, 0);
+-
+-    m_dialogLayout->setCurrentWidget(m_successPage);
+-}
+-
+-void BrowserRequestPrivate::notifyLoadFailed()
+-{
+-    m_dialogLayout->setCurrentWidget(m_loadFailurePage);
+-    showDialog();
+-}
+-
+-QWebElement BrowserRequestPrivate::initializeField(const QString &settingsKey,
+-                                                   const QString &paramKey)
+-{
+-    Q_Q(BrowserRequest);
+-
+-    QWebElement element;
+-
+-    if (!m_settings->contains(settingsKey)) return element;
+-
+-    QString selector = m_settings->value(settingsKey).toString();
+-    if (selector.isEmpty()) return element;
+-
+-    QWebFrame *frame = m_webView->page()->mainFrame();
+-    element = frame->findFirstElement(selector);
+-    if (!element.isNull()) {
+-        const QVariantMap &params = q->parameters();
+-        if (!paramKey.isEmpty() && params.contains(paramKey)) {
+-            QString value = params.value(paramKey).toString();
+-            if (!value.isEmpty()) {
+-                element.setAttribute("value", value);
+-            }
+-        }
+-    } else {
+-        BLAME() << "Couldn't find element:" << selector;
+-    }
+-
+-    return element;
+-}
+-
+-void BrowserRequestPrivate::initializeFields()
+-{
+-    /* If the configuration file contains a "UsernameField" or a
+-     * "PasswordField" key whose value is set to a valid CSS selector, we get
+-     * the QWebElement to these fields.
+-     * Also, if the username or password are present in the input parameters,
+-     * we prefill the respective fields.
+-     */
+-    m_usernameField = initializeField(keyUsernameField, SSOUI_KEY_USERNAME);
+-    m_passwordField = initializeField(keyPasswordField, SSOUI_KEY_PASSWORD);
+-    m_loginButton = initializeField(keyLoginButton);
+-}
+-
+-bool BrowserRequestPrivate::tryAutoLogin()
+-{
+-    if (m_loginButton.isNull()) return false;
+-
+-    if (m_usernameField.isNull() ||
+-        m_usernameField.evaluateJavaScript("this.value").isNull())
+-        return false;
+-
+-    if (m_passwordField.isNull() ||
+-        m_passwordField.evaluateJavaScript("this.value").isNull())
+-        return false;
+-
+-    /* Avoid falling in a failed login loop */
+-    m_loginCount++;
+-    if (m_loginCount > 1)
+-        return false;
+-
+-    m_loginButton.evaluateJavaScript("this.click()");
+-    return true;
+-}
+-
+-BrowserRequest::BrowserRequest(const QDBusConnection &connection,
+-                             const QDBusMessage &message,
+-                             const QVariantMap &parameters,
+-                             QObject *parent):
+-    Request(connection, message, parameters, parent),
+-    d_ptr(new BrowserRequestPrivate(this))
+-{
+-}
+-
+-BrowserRequest::~BrowserRequest()
+-{
+-}
+-
+-void BrowserRequest::start()
+-{
+-    Q_D(BrowserRequest);
+-
+-    Request::start();
+-    d->start();
+-}
+-
+-#include "browser-request.moc"
+diff --git a/src/browser-request.h b/src/browser-request.h
+deleted file mode 100644
+index 1afe24e..0000000
+--- a/src/browser-request.h
++++ /dev/null
+@@ -1,54 +0,0 @@
+-/*
+- * This file is part of signon-ui
+- *
+- * Copyright (C) 2011 Canonical Ltd.
+- *
+- * Contact: Alberto Mardegan <alberto.mardegan@canonical.com>
+- *
+- * This program is free software: you can redistribute it and/or modify it
+- * under the terms of the GNU General Public License version 3, as published
+- * by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranties of
+- * MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
+- * PURPOSE.  See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along
+- * with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef SIGNON_UI_BROWSER_REQUEST_H
+-#define SIGNON_UI_BROWSER_REQUEST_H
+-
+-#include "request.h"
+-
+-#include <QObject>
+-
+-namespace SignOnUi {
+-
+-class BrowserRequestPrivate;
+-
+-class BrowserRequest: public Request
+-{
+-    Q_OBJECT
+-
+-public:
+-    explicit BrowserRequest(const QDBusConnection &connection,
+-                            const QDBusMessage &message,
+-                            const QVariantMap &parameters,
+-                            QObject *parent = 0);
+-    ~BrowserRequest();
+-
+-    // reimplemented virtual methods
+-    void start();
+-
+-private:
+-    BrowserRequestPrivate *d_ptr;
+-    Q_DECLARE_PRIVATE(BrowserRequest)
+-};
+-
+-} // namespace
+-
+-#endif // SIGNON_UI_BROWSER_REQUEST_H
+-
+diff --git a/src/request.cpp b/src/request.cpp
+index 59154eb..8402f3a 100644
+--- a/src/request.cpp
++++ b/src/request.cpp
+@@ -22,14 +22,11 @@
+                              defined(FORCE_FOREIGN_QWINDOW))
+ #include "request.h"
+ 
+-#ifdef USE_UBUNTU_WEB_VIEW
+-#include "ubuntu-browser-request.h"
+-#endif
+-#include "browser-request.h"
+ #include "debug.h"
+ #include "dialog-request.h"
+ #include "errors.h"
+ #include "indicator-service.h"
++#include "ubuntu-browser-request.h"
+ #ifndef UNIT_TESTS
+ #include "webcredentials_interface.h"
+ #else
+@@ -263,16 +260,8 @@ Request *Request::newRequest(const QDBusConnection &connection,
+                              QObject *parent)
+ {
+     if (parameters.contains(SSOUI_KEY_OPENURL)) {
+-#ifdef USE_UBUNTU_WEB_VIEW
+-        TRACE() << "Platform:" << QGuiApplication::platformName();
+-        if (QGuiApplication::platformName().startsWith("ubuntu") ||
+-            qgetenv("XDG_CURRENT_DESKTOP").startsWith("Unity") ||
+-            qgetenv("SSOUI_USE_UBUNTU_WEB_VIEW") == QByteArray("1")) {
+-            return new UbuntuBrowserRequest(connection, message,
+-                                            parameters, parent);
+-        }
+-#endif
+-        return new BrowserRequest(connection, message, parameters, parent);
++        return new UbuntuBrowserRequest(connection, message,
++                                        parameters, parent);
+     } else {
+         return new DialogRequest(connection, message, parameters, parent);
+     }
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index fc7c33e..9683bcb 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -17,8 +17,7 @@ QT += \
+     gui \
+     network \
+     quick \
+-    webengine \
+-    webkit
++    webengine
+ 
+ PKGCONFIG += \
+     signon-plugins-common \
+@@ -32,7 +31,6 @@ lessThan(QT_MAJOR_VERSION, 5) {
+         x11
+ } else {
+     QT += \
+-        webkitwidgets \
+         widgets
+     PKGCONFIG += \
+         accounts-qt5 \
+@@ -44,7 +42,6 @@ lessThan(QT_MAJOR_VERSION, 5) {
+ 
+ HEADERS = \
+     animation-label.h \
+-    browser-request.h \
+     cookie-jar-manager.h \
+     debug.h \
+     dialog-request.h \
+@@ -62,7 +59,6 @@ HEADERS = \
+ 
+ SOURCES = \
+     animation-label.cpp \
+-    browser-request.cpp \
+     cookie-jar-manager.cpp \
+     debug.cpp \
+     dialog-request.cpp \
+@@ -84,33 +80,26 @@ lessThan(QT_MAJOR_VERSION, 5) {
+     SOURCES += embed-manager.cpp
+ }
+ 
+-COMMANDLINE = ""
+-
+-CONFIG(use-ubuntu-web-view) {
+-    DEFINES += USE_UBUNTU_WEB_VIEW
+-    HEADERS += \
+-        qquick-dialog.h \
+-        ubuntu-browser-request.h
+-    SOURCES += \
+-        qquick-dialog.cpp \
+-        ubuntu-browser-request.cpp
+-    OTHER_FILES += \
+-        qml/DefaultPage.qml \
+-        qml/KeyboardRectangle.qml \
+-        qml/MainWindow.qml \
+-        qml/StandardAnimation.qml \
+-        qml/WebView.qml
+-    RESOURCES += \
+-        qml/qml.qrc
+-
+-    QMAKE_SUBSTITUTES += \
+-        signon-ui.desktop.in
+-    desktop.path = $${INSTALL_PREFIX}/share/applications
+-    desktop.files += signon-ui.desktop
+-    INSTALLS += desktop
+-
+-    COMMANDLINE += " --desktop_file_hint=$${INSTALL_PREFIX}/share/applications/signon-ui.desktop"
+-}
++HEADERS += \
++    qquick-dialog.h \
++    ubuntu-browser-request.h
++SOURCES += \
++    qquick-dialog.cpp \
++    ubuntu-browser-request.cpp
++OTHER_FILES += \
++    qml/DefaultPage.qml \
++    qml/KeyboardRectangle.qml \
++    qml/MainWindow.qml \
++    qml/StandardAnimation.qml \
++    qml/WebView.qml
++RESOURCES += \
++    qml/qml.qrc
++
++QMAKE_SUBSTITUTES += \
++    signon-ui.desktop.in
++desktop.path = $${INSTALL_PREFIX}/share/applications
++desktop.files += signon-ui.desktop
++INSTALLS += desktop
+ 
+ DEFINES += \
+     DEBUG_ENABLED \
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index 8e444c8..4e3d38e 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -14,7 +14,8 @@ QT += \
+     dbus \
+     gui \
+     network \
+-    webkit
++    quick \
++    webengine
+ 
+ PKGCONFIG += \
+     signon-plugins-common \
+@@ -39,7 +40,6 @@ SOURCES += \
+     fake-webcredentials-interface.cpp \
+     test.cpp \
+     $$TOP_SRC_DIR/src/animation-label.cpp \
+-    $$TOP_SRC_DIR/src/browser-request.cpp \
+     $$TOP_SRC_DIR/src/cookie-jar-manager.cpp \
+     $$TOP_SRC_DIR/src/debug.cpp \
+     $$TOP_SRC_DIR/src/dialog-request.cpp \
+@@ -48,15 +48,16 @@ SOURCES += \
+     $$TOP_SRC_DIR/src/i18n.cpp \
+     $$TOP_SRC_DIR/src/indicator-service.cpp \
+     $$TOP_SRC_DIR/src/network-access-manager.cpp \
++    $$TOP_SRC_DIR/src/qquick-dialog.cpp \
+     $$TOP_SRC_DIR/src/reauthenticator.cpp \
+     $$TOP_SRC_DIR/src/request.cpp \
++    $$TOP_SRC_DIR/src/ubuntu-browser-request.cpp \
+     $$TOP_SRC_DIR/src/webcredentials_adaptor.cpp
+ HEADERS += \
+     fake-libnotify.h \
+     fake-webcredentials-interface.h \
+     test.h \
+     $$TOP_SRC_DIR/src/animation-label.h \
+-    $$TOP_SRC_DIR/src/browser-request.h \
+     $$TOP_SRC_DIR/src/debug.h \
+     $$TOP_SRC_DIR/src/cookie-jar-manager.h \
+     $$TOP_SRC_DIR/src/dialog-request.h \
+@@ -64,8 +65,10 @@ HEADERS += \
+     $$TOP_SRC_DIR/src/http-warning.h \
+     $$TOP_SRC_DIR/src/indicator-service.h \
+     $$TOP_SRC_DIR/src/network-access-manager.h \
++    $$TOP_SRC_DIR/src/qquick-dialog.h \
+     $$TOP_SRC_DIR/src/reauthenticator.h \
+     $$TOP_SRC_DIR/src/request.h \
++    $$TOP_SRC_DIR/src/ubuntu-browser-request.h \
+     $$TOP_SRC_DIR/src/webcredentials_adaptor.h
+ 
+ lessThan(QT_MAJOR_VERSION, 5) {
+-- 
+GitLab
+
+From dc5a4b7fb2fe03c3e73060db8631ade931ae1d65 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <amardegan@luxoft.com>
+Date: Sun, 22 Oct 2017 16:17:39 +0300
+Subject: [PATCH] Rename UbuntuBrowserRequest to BrowserRequest
+
+---
+ ...rowser-request.cpp => browser-request.cpp} | 66 +++++++++----------
+ ...tu-browser-request.h => browser-request.h} | 24 +++----
+ src/request.cpp                               |  6 +-
+ src/signon-ui.pro                             | 10 ++-
+ tests/unit/tst_signon_ui.pro                  |  4 +-
+ 5 files changed, 54 insertions(+), 56 deletions(-)
+ rename src/{ubuntu-browser-request.cpp => browser-request.cpp} (78%)
+ rename src/{ubuntu-browser-request.h => browser-request.h} (61%)
+
+diff --git a/src/ubuntu-browser-request.cpp b/src/browser-request.cpp
+similarity index 78%
+rename from src/ubuntu-browser-request.cpp
+rename to src/browser-request.cpp
+index fe17828..146bec8 100644
+--- a/src/ubuntu-browser-request.cpp
++++ b/src/browser-request.cpp
+@@ -19,7 +19,7 @@
+  * with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#include "ubuntu-browser-request.h"
++#include "browser-request.h"
+ 
+ #include "debug.h"
+ #include "qquick-dialog.h"
+@@ -37,18 +37,18 @@ using namespace SignOnUi::QQuick;
+ 
+ namespace SignOnUi {
+ 
+-class UbuntuBrowserRequestPrivate: public QObject
++class BrowserRequestPrivate: public QObject
+ {
+     Q_OBJECT
+-    Q_DECLARE_PUBLIC(UbuntuBrowserRequest)
++    Q_DECLARE_PUBLIC(BrowserRequest)
+     Q_PROPERTY(QUrl pageComponentUrl READ pageComponentUrl CONSTANT)
+     Q_PROPERTY(QUrl currentUrl READ currentUrl WRITE setCurrentUrl)
+     Q_PROPERTY(QUrl startUrl READ startUrl CONSTANT)
+     Q_PROPERTY(QUrl finalUrl READ finalUrl CONSTANT)
+ 
+ public:
+-    UbuntuBrowserRequestPrivate(UbuntuBrowserRequest *request);
+-    ~UbuntuBrowserRequestPrivate();
++    BrowserRequestPrivate(BrowserRequest *request);
++    ~BrowserRequestPrivate();
+ 
+     void start();
+ 
+@@ -78,13 +78,13 @@ private:
+     QUrl m_finalUrl;
+     QUrl m_responseUrl;
+     QTimer m_failTimer;
+-    mutable UbuntuBrowserRequest *q_ptr;
++    mutable BrowserRequest *q_ptr;
+ };
+ 
+ } // namespace
+ 
+-UbuntuBrowserRequestPrivate::UbuntuBrowserRequestPrivate(
+-    UbuntuBrowserRequest *request):
++BrowserRequestPrivate::BrowserRequestPrivate(
++    BrowserRequest *request):
+     QObject(request),
+     m_dialog(0),
+     q_ptr(request)
+@@ -95,14 +95,14 @@ UbuntuBrowserRequestPrivate::UbuntuBrowserRequestPrivate(
+                      this, SLOT(onFailTimer()));
+ }
+ 
+-UbuntuBrowserRequestPrivate::~UbuntuBrowserRequestPrivate()
++BrowserRequestPrivate::~BrowserRequestPrivate()
+ {
+     delete m_dialog;
+ }
+ 
+-void UbuntuBrowserRequestPrivate::start()
++void BrowserRequestPrivate::start()
+ {
+-    Q_Q(UbuntuBrowserRequest);
++    Q_Q(BrowserRequest);
+ 
+     const QVariantMap &params = q->parameters();
+     TRACE() << params;
+@@ -136,9 +136,9 @@ void UbuntuBrowserRequestPrivate::start()
+     m_dialog->setSource(webview);
+ }
+ 
+-QUrl UbuntuBrowserRequestPrivate::pageComponentUrl() const
++QUrl BrowserRequestPrivate::pageComponentUrl() const
+ {
+-    Q_Q(const UbuntuBrowserRequest);
++    Q_Q(const BrowserRequest);
+     /* We define the X-PageComponent key to let the clients override the QML
+      * component to be used to build the authentication page.
+      * To prevent a malicious client to show it's own UI, we require that the
+@@ -154,7 +154,7 @@ QUrl UbuntuBrowserRequestPrivate::pageComponentUrl() const
+     }
+ }
+ 
+-void UbuntuBrowserRequestPrivate::setCurrentUrl(const QUrl &url)
++void BrowserRequestPrivate::setCurrentUrl(const QUrl &url)
+ {
+     TRACE() << "Url changed:" << url;
+     m_failTimer.stop();
+@@ -173,9 +173,9 @@ void UbuntuBrowserRequestPrivate::setCurrentUrl(const QUrl &url)
+     }
+ }
+ 
+-void UbuntuBrowserRequestPrivate::cancel()
++void BrowserRequestPrivate::cancel()
+ {
+-    Q_Q(UbuntuBrowserRequest);
++    Q_Q(BrowserRequest);
+ 
+     TRACE() << "Client requested to cancel";
+     q->setCanceled();
+@@ -184,14 +184,14 @@ void UbuntuBrowserRequestPrivate::cancel()
+     }
+ }
+ 
+-void UbuntuBrowserRequestPrivate::onLoadStarted()
++void BrowserRequestPrivate::onLoadStarted()
+ {
+     m_failTimer.stop();
+ }
+ 
+-void UbuntuBrowserRequestPrivate::onLoadFinished(bool ok)
++void BrowserRequestPrivate::onLoadFinished(bool ok)
+ {
+-    Q_Q(UbuntuBrowserRequest);
++    Q_Q(BrowserRequest);
+ 
+     TRACE() << "Load finished" << ok;
+ 
+@@ -209,9 +209,9 @@ void UbuntuBrowserRequestPrivate::onLoadFinished(bool ok)
+     }
+ }
+ 
+-void UbuntuBrowserRequestPrivate::onFailTimer()
++void BrowserRequestPrivate::onFailTimer()
+ {
+-    Q_Q(UbuntuBrowserRequest);
++    Q_Q(BrowserRequest);
+ 
+     TRACE() << "Page loading failed";
+     if (m_dialog) {
+@@ -220,9 +220,9 @@ void UbuntuBrowserRequestPrivate::onFailTimer()
+     q->setResult(QVariantMap());
+ }
+ 
+-void UbuntuBrowserRequestPrivate::onFinished()
++void BrowserRequestPrivate::onFinished()
+ {
+-    Q_Q(UbuntuBrowserRequest);
++    Q_Q(BrowserRequest);
+ 
+     TRACE() << "Browser dialog closed";
+     QObject::disconnect(m_dialog, SIGNAL(finished(int)),
+@@ -237,7 +237,7 @@ void UbuntuBrowserRequestPrivate::onFinished()
+     q->setResult(reply);
+ }
+ 
+-void UbuntuBrowserRequestPrivate::buildDialog(const QVariantMap &params)
++void BrowserRequestPrivate::buildDialog(const QVariantMap &params)
+ {
+     m_dialog = new Dialog;
+ 
+@@ -256,25 +256,25 @@ void UbuntuBrowserRequestPrivate::buildDialog(const QVariantMap &params)
+     TRACE() << "Dialog was built";
+ }
+ 
+-UbuntuBrowserRequest::UbuntuBrowserRequest(const QDBusConnection &connection,
+-                                           const QDBusMessage &message,
+-                                           const QVariantMap &parameters,
+-                                           QObject *parent):
++BrowserRequest::BrowserRequest(const QDBusConnection &connection,
++                               const QDBusMessage &message,
++                               const QVariantMap &parameters,
++                               QObject *parent):
+     Request(connection, message, parameters, parent),
+-    d_ptr(new UbuntuBrowserRequestPrivate(this))
++    d_ptr(new BrowserRequestPrivate(this))
+ {
+ }
+ 
+-UbuntuBrowserRequest::~UbuntuBrowserRequest()
++BrowserRequest::~BrowserRequest()
+ {
+ }
+ 
+-void UbuntuBrowserRequest::start()
++void BrowserRequest::start()
+ {
+-    Q_D(UbuntuBrowserRequest);
++    Q_D(BrowserRequest);
+ 
+     Request::start();
+     d->start();
+ }
+ 
+-#include "ubuntu-browser-request.moc"
++#include "browser-request.moc"
+diff --git a/src/ubuntu-browser-request.h b/src/browser-request.h
+similarity index 61%
+rename from src/ubuntu-browser-request.h
+rename to src/browser-request.h
+index 3480bf0..f701513 100644
+--- a/src/ubuntu-browser-request.h
++++ b/src/browser-request.h
+@@ -18,8 +18,8 @@
+  * with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#ifndef SIGNON_UI_UBUNTU_BROWSER_REQUEST_H
+-#define SIGNON_UI_UBUNTU_BROWSER_REQUEST_H
++#ifndef SIGNON_UI_BROWSER_REQUEST_H
++#define SIGNON_UI_BROWSER_REQUEST_H
+ 
+ #include "request.h"
+ 
+@@ -27,28 +27,28 @@
+ 
+ namespace SignOnUi {
+ 
+-class UbuntuBrowserRequestPrivate;
++class BrowserRequestPrivate;
+ 
+-class UbuntuBrowserRequest: public Request
++class BrowserRequest: public Request
+ {
+     Q_OBJECT
+ 
+ public:
+-    explicit UbuntuBrowserRequest(const QDBusConnection &connection,
+-                                  const QDBusMessage &message,
+-                                  const QVariantMap &parameters,
+-                                  QObject *parent = 0);
+-    ~UbuntuBrowserRequest();
++    explicit BrowserRequest(const QDBusConnection &connection,
++                            const QDBusMessage &message,
++                            const QVariantMap &parameters,
++                            QObject *parent = 0);
++    ~BrowserRequest();
+ 
+     // reimplemented virtual methods
+     void start();
+ 
+ private:
+-    UbuntuBrowserRequestPrivate *d_ptr;
+-    Q_DECLARE_PRIVATE(UbuntuBrowserRequest)
++    BrowserRequestPrivate *d_ptr;
++    Q_DECLARE_PRIVATE(BrowserRequest)
+ };
+ 
+ } // namespace
+ 
+-#endif // SIGNON_UI_UBUNTU_BROWSER_REQUEST_H
++#endif // SIGNON_UI_BROWSER_REQUEST_H
+ 
+diff --git a/src/request.cpp b/src/request.cpp
+index 8402f3a..17ee42a 100644
+--- a/src/request.cpp
++++ b/src/request.cpp
+@@ -22,11 +22,11 @@
+                              defined(FORCE_FOREIGN_QWINDOW))
+ #include "request.h"
+ 
++#include "browser-request.h"
+ #include "debug.h"
+ #include "dialog-request.h"
+ #include "errors.h"
+ #include "indicator-service.h"
+-#include "ubuntu-browser-request.h"
+ #ifndef UNIT_TESTS
+ #include "webcredentials_interface.h"
+ #else
+@@ -260,8 +260,8 @@ Request *Request::newRequest(const QDBusConnection &connection,
+                              QObject *parent)
+ {
+     if (parameters.contains(SSOUI_KEY_OPENURL)) {
+-        return new UbuntuBrowserRequest(connection, message,
+-                                        parameters, parent);
++        return new BrowserRequest(connection, message,
++                                  parameters, parent);
+     } else {
+         return new DialogRequest(connection, message, parameters, parent);
+     }
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index 9683bcb..465b06f 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -42,6 +42,7 @@ lessThan(QT_MAJOR_VERSION, 5) {
+ 
+ HEADERS = \
+     animation-label.h \
++    browser-request.h \
+     cookie-jar-manager.h \
+     debug.h \
+     dialog-request.h \
+@@ -52,6 +53,7 @@ HEADERS = \
+     inactivity-timer.h \
+     indicator-service.h \
+     network-access-manager.h \
++    qquick-dialog.h \
+     reauthenticator.h \
+     request.h \
+     service.h \
+@@ -59,6 +61,7 @@ HEADERS = \
+ 
+ SOURCES = \
+     animation-label.cpp \
++    browser-request.cpp \
+     cookie-jar-manager.cpp \
+     debug.cpp \
+     dialog-request.cpp \
+@@ -70,6 +73,7 @@ SOURCES = \
+     main.cpp \
+     my-network-proxy-factory.cpp \
+     network-access-manager.cpp \
++    qquick-dialog.cpp \
+     reauthenticator.cpp \
+     request.cpp \
+     service.cpp \
+@@ -80,12 +84,6 @@ lessThan(QT_MAJOR_VERSION, 5) {
+     SOURCES += embed-manager.cpp
+ }
+ 
+-HEADERS += \
+-    qquick-dialog.h \
+-    ubuntu-browser-request.h
+-SOURCES += \
+-    qquick-dialog.cpp \
+-    ubuntu-browser-request.cpp
+ OTHER_FILES += \
+     qml/DefaultPage.qml \
+     qml/KeyboardRectangle.qml \
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index 4e3d38e..b6b6abb 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -40,6 +40,7 @@ SOURCES += \
+     fake-webcredentials-interface.cpp \
+     test.cpp \
+     $$TOP_SRC_DIR/src/animation-label.cpp \
++    $$TOP_SRC_DIR/src/browser-request.cpp \
+     $$TOP_SRC_DIR/src/cookie-jar-manager.cpp \
+     $$TOP_SRC_DIR/src/debug.cpp \
+     $$TOP_SRC_DIR/src/dialog-request.cpp \
+@@ -51,13 +52,13 @@ SOURCES += \
+     $$TOP_SRC_DIR/src/qquick-dialog.cpp \
+     $$TOP_SRC_DIR/src/reauthenticator.cpp \
+     $$TOP_SRC_DIR/src/request.cpp \
+-    $$TOP_SRC_DIR/src/ubuntu-browser-request.cpp \
+     $$TOP_SRC_DIR/src/webcredentials_adaptor.cpp
+ HEADERS += \
+     fake-libnotify.h \
+     fake-webcredentials-interface.h \
+     test.h \
+     $$TOP_SRC_DIR/src/animation-label.h \
++    $$TOP_SRC_DIR/src/browser-request.h \
+     $$TOP_SRC_DIR/src/debug.h \
+     $$TOP_SRC_DIR/src/cookie-jar-manager.h \
+     $$TOP_SRC_DIR/src/dialog-request.h \
+@@ -68,7 +69,6 @@ HEADERS += \
+     $$TOP_SRC_DIR/src/qquick-dialog.h \
+     $$TOP_SRC_DIR/src/reauthenticator.h \
+     $$TOP_SRC_DIR/src/request.h \
+-    $$TOP_SRC_DIR/src/ubuntu-browser-request.h \
+     $$TOP_SRC_DIR/src/webcredentials_adaptor.h
+ 
+ lessThan(QT_MAJOR_VERSION, 5) {
+-- 
+GitLab
+
+From 4368bb77d9d1abc2978af514225ba4a42c29a646 Mon Sep 17 00:00:00 2001
+From: Alberto Mardegan <amardegan@luxoft.com>
+Date: Sun, 22 Oct 2017 16:21:24 +0300
+Subject: [PATCH] Add .gitignore files
+
+---
+ .gitignore            | 7 +++++++
+ src/.gitignore        | 6 ++++++
+ tests/unit/.gitignore | 2 ++
+ 3 files changed, 15 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 src/.gitignore
+ create mode 100644 tests/unit/.gitignore
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..6c34a3d
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,7 @@
++*.moc
++*.o
++*.swp
++.*
++Makefile*
++moc_*
++qrc_*
+diff --git a/src/.gitignore b/src/.gitignore
+new file mode 100644
+index 0000000..381e536
+--- /dev/null
++++ b/src/.gitignore
+@@ -0,0 +1,6 @@
++com.canonical.indicators.webcredentials.service
++com.nokia.singlesignonui.service
++signon-ui
++signon-ui.desktop
++webcredentials_adaptor.cpp
++webcredentials_adaptor.h
+diff --git a/tests/unit/.gitignore b/tests/unit/.gitignore
+new file mode 100644
+index 0000000..2f2217f
+--- /dev/null
++++ b/tests/unit/.gitignore
+@@ -0,0 +1,2 @@
++signon-ui-unittest
++tst_inactivity_timer
+-- 
+GitLab
+
+From a71ca1c294dbcfdf12877f170a8670e9329d6c67 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 19:58:31 +0200
+Subject: [PATCH] Drop Qt4 support
+
+---
+ src/embed-manager.cpp        | 137 -----------------------------------
+ src/embed-manager.h          |  52 -------------
+ src/signon-ui.pro            |  26 ++-----
+ tests/unit/tst_signon_ui.pro |  23 ++----
+ 4 files changed, 13 insertions(+), 225 deletions(-)
+ delete mode 100644 src/embed-manager.cpp
+ delete mode 100644 src/embed-manager.h
+
+diff --git a/src/embed-manager.cpp b/src/embed-manager.cpp
+deleted file mode 100644
+index c1e1fff..0000000
+--- a/src/embed-manager.cpp
++++ /dev/null
+@@ -1,137 +0,0 @@
+-/*
+- * This file is part of signon-ui
+- *
+- * Copyright (C) 2012 Canonical Ltd.
+- *
+- * Contact: Alberto Mardegan <alberto.mardegan@canonical.com>
+- *
+- * This program is free software: you can redistribute it and/or modify it
+- * under the terms of the GNU General Public License version 3, as published
+- * by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranties of
+- * MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
+- * PURPOSE.  See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along
+- * with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#include "debug.h"
+-#include "embed-manager.h"
+-
+-#include <QApplication>
+-#include <QPointer>
+-#include <QX11Info>
+-#include <X11/Xatom.h>
+-#include <X11/Xlib.h>
+-
+-using namespace SignOnUi;
+-
+-static EmbedManager *staticInstance = 0;
+-
+-namespace SignOnUi {
+-
+-class EmbedManagerPrivate
+-{
+-public:
+-    EmbedManagerPrivate();
+-    ~EmbedManagerPrivate();
+-
+-private:
+-    friend class EmbedManager;
+-    QMap<WId,QPointer<QX11EmbedWidget> > m_embedWidgets;
+-};
+-
+-} // namespace
+-
+-/* Workaround for https://bugreports.qt-project.org/browse/QTBUG-3617
+- * Send XEMBED_REQUEST_FOCUS manually.
+- */
+-#define XEMBED_REQUEST_FOCUS 3
+-
+-// Sends an XEmbed message.
+-static void sendXEmbedMessage(WId window, Display *display, long message,
+-                  long detail = 0, long data1 = 0, long data2 = 0)
+-{
+-    XClientMessageEvent c;
+-    memset(&c, 0, sizeof(c));
+-    c.type = ClientMessage;
+-    c.message_type = XInternAtom(display, "_XEMBED", false);
+-    c.format = 32;
+-    c.display = display;
+-    c.window = window;
+-
+-    c.data.l[0] = QX11Info::appTime();
+-    c.data.l[1] = message;
+-    c.data.l[2] = detail;
+-    c.data.l[3] = data1;
+-    c.data.l[4] = data2;
+-
+-    XSendEvent(display, window, false, NoEventMask, (XEvent *) &c);
+-}
+-
+-static bool x11EventFilter(void *message, long *)
+-{
+-    XEvent *event = reinterpret_cast<XEvent*>(message);
+-    if (event->type == ButtonPress)
+-    {
+-        QWidget *w = QWidget::find(event->xbutton.window);
+-        if (w && w->window()->objectName() == "request-widget") {
+-            QX11EmbedWidget *embed = static_cast<QX11EmbedWidget*>(w->window());
+-            QApplication::setActiveWindow(w->window());
+-            sendXEmbedMessage(embed->containerWinId(),
+-                              w->x11Info().display(),
+-                              XEMBED_REQUEST_FOCUS);
+-        }
+-    }
+-    return false;
+-}
+-
+-EmbedManagerPrivate::EmbedManagerPrivate()
+-{
+-}
+-
+-EmbedManagerPrivate::~EmbedManagerPrivate()
+-{
+-}
+-
+-EmbedManager *EmbedManager::instance()
+-{
+-    if (staticInstance == 0) {
+-        staticInstance = new EmbedManager();
+-    }
+-
+-    return staticInstance;
+-}
+-
+-EmbedManager::EmbedManager(QObject *parent):
+-    QObject(parent),
+-    d_ptr(new EmbedManagerPrivate)
+-{
+-    QCoreApplication::instance()->setEventFilter(x11EventFilter);
+-}
+-
+-EmbedManager::~EmbedManager()
+-{
+-    delete d_ptr;
+-}
+-
+-QX11EmbedWidget *EmbedManager::widgetFor(WId windowId)
+-{
+-    Q_D(EmbedManager);
+-
+-    QX11EmbedWidget *embed = d->m_embedWidgets.value(windowId, 0);
+-    if (embed == 0) {
+-        /* Create a new embed widget */
+-        embed = new QX11EmbedWidget;
+-        QObject::connect(embed, SIGNAL(containerClosed()),
+-                         embed, SLOT(deleteLater()));
+-        embed->embedInto(windowId);
+-        embed->setObjectName("request-widget");
+-        d->m_embedWidgets[windowId] = embed;
+-    }
+-
+-    return embed;
+-}
+diff --git a/src/embed-manager.h b/src/embed-manager.h
+deleted file mode 100644
+index 57476b7..0000000
+--- a/src/embed-manager.h
++++ /dev/null
+@@ -1,52 +0,0 @@
+-/*
+- * This file is part of signon-ui
+- *
+- * Copyright (C) 2012 Canonical Ltd.
+- *
+- * Contact: Alberto Mardegan <alberto.mardegan@canonical.com>
+- *
+- * This program is free software: you can redistribute it and/or modify it
+- * under the terms of the GNU General Public License version 3, as published
+- * by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranties of
+- * MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
+- * PURPOSE.  See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along
+- * with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef SIGNON_UI_EMBED_H
+-#define SIGNON_UI_EMBED_H
+-
+-#include <QObject>
+-#include <QX11EmbedWidget>
+-
+-namespace SignOnUi {
+-
+-class EmbedManagerPrivate;
+-
+-class EmbedManager: public QObject
+-{
+-    Q_OBJECT
+-
+-public:
+-    static EmbedManager *instance();
+-    ~EmbedManager();
+-
+-    QX11EmbedWidget *widgetFor(WId windowId);
+-
+-public:
+-    EmbedManager(QObject *parent = 0);
+-
+-private:
+-    EmbedManagerPrivate *d_ptr;
+-    Q_DECLARE_PRIVATE(EmbedManager)
+-};
+-
+-} // namespace
+-
+-#endif // SIGNON_UI_EMBED_H
+-
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index 465b06f..68584fb 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -24,20 +24,13 @@ PKGCONFIG += \
+     libnotify \
+     libproxy-1.0
+ 
+-lessThan(QT_MAJOR_VERSION, 5) {
+-    PKGCONFIG += \
+-        accounts-qt \
+-        libsignon-qt \
+-        x11
+-} else {
+-    QT += \
+-        widgets
+-    PKGCONFIG += \
+-        accounts-qt5 \
+-        libsignon-qt5
+-    CONFIG(force-foreign-qwindow) {
+-        DEFINES += FORCE_FOREIGN_QWINDOW
+-    }
++QT += \
++    widgets
++PKGCONFIG += \
++    accounts-qt6 \
++    libsignon-qt6
++CONFIG(force-foreign-qwindow) {
++    DEFINES += FORCE_FOREIGN_QWINDOW
+ }
+ 
+ HEADERS = \
+@@ -79,11 +72,6 @@ SOURCES = \
+     service.cpp \
+     webcredentials_interface.cpp
+ 
+-lessThan(QT_MAJOR_VERSION, 5) {
+-    HEADERS += embed-manager.h
+-    SOURCES += embed-manager.cpp
+-}
+-
+ OTHER_FILES += \
+     qml/DefaultPage.qml \
+     qml/KeyboardRectangle.qml \
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index b6b6abb..7a2cfd1 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -21,18 +21,12 @@ PKGCONFIG += \
+     signon-plugins-common \
+     libnotify
+ 
+-lessThan(QT_MAJOR_VERSION, 5) {
+-    PKGCONFIG += \
+-        accounts-qt \
+-        libsignon-qt
+-} else {
+-    QT += \
+-        webkitwidgets \
+-        widgets
+-    PKGCONFIG += \
+-        accounts-qt5 \
+-        libsignon-qt5
+-}
++QT += \
++    webkitwidgets \
++    widgets
++PKGCONFIG += \
++    accounts-qt6 \
++    libsignon-qt6
+ 
+ SOURCES += \
+     fake-libnotify.cpp \
+@@ -71,11 +65,6 @@ HEADERS += \
+     $$TOP_SRC_DIR/src/request.h \
+     $$TOP_SRC_DIR/src/webcredentials_adaptor.h
+ 
+-lessThan(QT_MAJOR_VERSION, 5) {
+-    SOURCES += $$TOP_SRC_DIR/src/embed-manager.cpp
+-    HEADERS += $$TOP_SRC_DIR/src/embed-manager.h
+-}
+-
+ INCLUDEPATH += \
+     . \
+     $$TOP_SRC_DIR/src
+-- 
+GitLab
+
+From a56df6d0a4381a91badd9b491e88a308735e68b6 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:01:00 +0200
+Subject: [PATCH] Port away from deprecated QDesktopServices::storageLocation
+
+---
+ src/cookie-jar-manager.cpp | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/src/cookie-jar-manager.cpp b/src/cookie-jar-manager.cpp
+index 792e347..e479ace 100644
+--- a/src/cookie-jar-manager.cpp
++++ b/src/cookie-jar-manager.cpp
+@@ -27,11 +27,11 @@
+ #include <QCoreApplication>
+ #include <QDBusMetaType>
+ #include <QDataStream>
+-#include <QDesktopServices>
+ #include <QDir>
+ #include <QFile>
+ #include <QHash>
+ #include <QNetworkCookie>
++#include <QStandardPaths>
+ 
+ using namespace SignOnUi;
+ 
+@@ -154,9 +154,7 @@ CookieJarManager::CookieJarManager(QObject *parent):
+     qDBusRegisterMetaType<RawCookies>();
+     qRegisterMetaTypeStreamOperators<QList<QNetworkCookie> >("QList<QNetworkCookie>");
+ 
+-    d->cookieDir =
+-        QDesktopServices::storageLocation(QDesktopServices::CacheLocation) +
+-        QDir::separator() + "cookies";
++    d->cookieDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/cookies";
+     if (!d->cookieDir.exists()) {
+         d->cookieDir.mkpath(".");
+     }
+-- 
+GitLab
+
+From 78fb93764718a2c968b7d2a24bc6b788771da183 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:01:38 +0200
+Subject: [PATCH] Remove leftovers from qtwebkit
+
+---
+ tests/unit/tst_signon_ui.pro | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index 7a2cfd1..15e6151 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -22,7 +22,6 @@ PKGCONFIG += \
+     libnotify
+ 
+ QT += \
+-    webkitwidgets \
+     widgets
+ PKGCONFIG += \
+     accounts-qt6 \
+-- 
+GitLab
+
+From 8a602f35f30f11e646b319053e0b58309d2b62cc Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:03:37 +0200
+Subject: [PATCH] Fix out-of-tree build
+
+Look for generated class in the build dir
+---
+ tests/unit/tst_signon_ui.pro | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index 15e6151..e9482dd 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -45,7 +45,7 @@ SOURCES += \
+     $$TOP_SRC_DIR/src/qquick-dialog.cpp \
+     $$TOP_SRC_DIR/src/reauthenticator.cpp \
+     $$TOP_SRC_DIR/src/request.cpp \
+-    $$TOP_SRC_DIR/src/webcredentials_adaptor.cpp
++    $$OUT_PWD/../../src/webcredentials_adaptor.cpp
+ HEADERS += \
+     fake-libnotify.h \
+     fake-webcredentials-interface.h \
+@@ -62,11 +62,12 @@ HEADERS += \
+     $$TOP_SRC_DIR/src/qquick-dialog.h \
+     $$TOP_SRC_DIR/src/reauthenticator.h \
+     $$TOP_SRC_DIR/src/request.h \
+-    $$TOP_SRC_DIR/src/webcredentials_adaptor.h
++    $$OUT_PWD/../../src/webcredentials_adaptor.h
+ 
+ INCLUDEPATH += \
+     . \
+-    $$TOP_SRC_DIR/src
++    $$TOP_SRC_DIR/src \
++    $$OUT_PWD/../../src
+ 
+ QMAKE_CXXFLAGS += \
+     -fno-exceptions \
+-- 
+GitLab
+
+From 3b2f14389fb7cf59a18167f4767dd93f3f8066b4 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:04:18 +0200
+Subject: [PATCH] Don't add po as qmake subdir
+
+it doesn't have qmake files
+---
+ signon-ui.pro | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/signon-ui.pro b/signon-ui.pro
+index 261da74..7bdcd33 100644
+--- a/signon-ui.pro
++++ b/signon-ui.pro
+@@ -4,7 +4,6 @@ include(common-project-config.pri)
+ TEMPLATE = subdirs
+ CONFIG += ordered
+ SUBDIRS = \
+-    po \
+     src \
+     tests
+ 
+-- 
+GitLab
+
+From d2e7145a2cf666c4ee24f6a82948831546120975 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:10:20 +0200
+Subject: [PATCH] Fix default arg for window flags
+
+---
+ src/dialog.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/dialog.h b/src/dialog.h
+index b907527..8788ce3 100644
+--- a/src/dialog.h
++++ b/src/dialog.h
+@@ -31,7 +31,7 @@ class Dialog: public QDialog
+     Q_OBJECT
+ 
+ public:
+-    explicit Dialog(QWidget *parent = 0, Qt::WindowFlags f = 0);
++    explicit Dialog(QWidget *parent = 0, Qt::WindowFlags f = {});
+     ~Dialog();
+ 
+ protected:
+-- 
+GitLab
+
+From f05c182ab3419d043d0c98cd5940e62047968536 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:10:35 +0200
+Subject: [PATCH] Add missing include
+
+---
+ src/inactivity-timer.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/inactivity-timer.cpp b/src/inactivity-timer.cpp
+index cc019b1..45ffe5b 100644
+--- a/src/inactivity-timer.cpp
++++ b/src/inactivity-timer.cpp
+@@ -22,6 +22,8 @@
+ 
+ #include "debug.h"
+ 
++#include <QVariant>
++
+ using namespace SignOnUi;
+ 
+ InactivityTimer::InactivityTimer(int interval, QObject *parent):
+-- 
+GitLab
+
+From b2cfb5d14a3c7ed882d2e98658e2de6e0cc24faf Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:11:22 +0200
+Subject: [PATCH] Fix QML code for Qt6
+
+---
+ src/qml/WebView.qml | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/qml/WebView.qml b/src/qml/WebView.qml
+index 33462b8..59ef186 100644
+--- a/src/qml/WebView.qml
++++ b/src/qml/WebView.qml
+@@ -8,14 +8,14 @@ WebEngineView {
+ 
+     Component.onCompleted: url = signonRequest.startUrl
+ 
+-    onLoadingChanged: {
++    onLoadingChanged: loadingInfo => {
+         console.log("Loading changed")
+         if (loading && !lastLoadFailed) {
+             signonRequest.onLoadStarted()
+-        } else if (loadRequest.status == WebEngineView.LoadSucceededStatus) {
++        } else if (loadingInfo.status == WebEngineView.LoadSucceededStatus) {
+             lastLoadFailed = false
+             signonRequest.onLoadFinished(true)
+-        } else if (loadRequest.status == WebEngineView.LoadFailedStatus) {
++        } else if (loadingInfo.status == WebEngineView.LoadFailedStatus) {
+             lastLoadFailed = true
+             signonRequest.onLoadFinished(false)
+         }
+-- 
+GitLab
+
+From 9ff2e586652747ac4c7c77f9453c58a4e448ba32 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:16:03 +0200
+Subject: [PATCH] Adapt webengine code to Qt6
+
+---
+ src/main.cpp                 | 9 +++++++++
+ src/signon-ui.pro            | 9 +++++++--
+ tests/unit/tst_signon_ui.pro | 9 +++++++--
+ 3 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 6e58faa..cf53b7a 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -29,7 +29,12 @@
+ #include <QDBusConnection>
+ #include <QProcessEnvironment>
+ #include <QSettings>
++
++#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+ #include <QtWebEngine>
++#else
++#include <QtWebEngineQuick>
++#endif
+ 
+ using namespace SignOnUi;
+ 
+@@ -40,7 +45,11 @@ static const char objectPath[] = "/SignonUi";
+ int main(int argc, char **argv)
+ {
+     QApplication app(argc, argv);
++#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+     QtWebEngine::initialize();
++#else
++    QtWebEngineQuick::initialize();
++#endif
+ 
+     app.setApplicationName("signon-ui");
+     app.setQuitOnLastWindowClosed(false);
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index 68584fb..92e81d6 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -16,8 +16,13 @@ QT += \
+     dbus \
+     gui \
+     network \
+-    quick \
+-    webengine
++    quick
++
++lessThan(QT_MAJOR_VERSION, 5) {
++    QT += webengine
++} else {
++    QT += webenginequick
++}
+ 
+ PKGCONFIG += \
+     signon-plugins-common \
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index e9482dd..e32f698 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -14,8 +14,13 @@ QT += \
+     dbus \
+     gui \
+     network \
+-    quick \
+-    webengine
++    quick
++
++lessThan(QT_MAJOR_VERSION, 5) {
++    QT += webengine
++} else {
++    QT += webenginequick
++}
+ 
+ PKGCONFIG += \
+     signon-plugins-common \
+-- 
+GitLab
+
+From d18f7219513ac3fc48f37a8c0999b41f54deb275 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:17:26 +0200
+Subject: [PATCH] Don't use qRegisterMetaTypeStreamOperators in Qt6
+
+Not needed there
+---
+ src/cookie-jar-manager.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/cookie-jar-manager.cpp b/src/cookie-jar-manager.cpp
+index e479ace..5268fa6 100644
+--- a/src/cookie-jar-manager.cpp
++++ b/src/cookie-jar-manager.cpp
+@@ -152,7 +152,9 @@ CookieJarManager::CookieJarManager(QObject *parent):
+     Q_D(CookieJarManager);
+ 
+     qDBusRegisterMetaType<RawCookies>();
++#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+     qRegisterMetaTypeStreamOperators<QList<QNetworkCookie> >("QList<QNetworkCookie>");
++#endif
+ 
+     d->cookieDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/cookies";
+     if (!d->cookieDir.exists()) {
+-- 
+GitLab
+
+From d5e76702810874c35195e754d1481b92d0cce5f8 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Sun, 15 Oct 2023 20:19:09 +0200
+Subject: [PATCH] Port away from deprecated QLayout::setMargin
+
+---
+ src/animation-label.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/animation-label.cpp b/src/animation-label.cpp
+index afcce3e..c921067 100644
+--- a/src/animation-label.cpp
++++ b/src/animation-label.cpp
+@@ -31,7 +31,7 @@ AnimationLabel::AnimationLabel(const QString &animationPath, QWidget *parent):
+     QVBoxLayout *layout = new QVBoxLayout(this);
+     layout->setAlignment(Qt::AlignCenter);
+     layout->setSpacing(0);
+-    layout->setMargin(0);
++    layout->setContentsMargins(0, 0, 0, 0);
+     layout->addWidget(container);
+     setLayout(layout);
+ }
+-- 
+GitLab
+
+From 69d1b74088e59e14e9c832699c2d2d5f99c34f9b Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Mon, 16 Oct 2023 22:06:38 +0200
+Subject: [PATCH] Fix Qt version check
+
+We must use webengine for Qt5 and webenginequick for Qt6
+---
+ src/signon-ui.pro            | 2 +-
+ tests/unit/tst_signon_ui.pro | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index 92e81d6..e56ab11 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -18,7 +18,7 @@ QT += \
+     network \
+     quick
+ 
+-lessThan(QT_MAJOR_VERSION, 5) {
++lessThan(QT_MAJOR_VERSION, 6) {
+     QT += webengine
+ } else {
+     QT += webenginequick
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index e32f698..117b32b 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -16,7 +16,7 @@ QT += \
+     network \
+     quick
+ 
+-lessThan(QT_MAJOR_VERSION, 5) {
++lessThan(QT_MAJOR_VERSION, 6) {
+     QT += webengine
+ } else {
+     QT += webenginequick
+-- 
+GitLab
+
+From eef943f0edf3beee8ecb85d4a9dae3656002fc24 Mon Sep 17 00:00:00 2001
+From: Nicolas Fella <nicolas.fella@gmx.de>
+Date: Mon, 16 Oct 2023 22:12:00 +0200
+Subject: [PATCH] Fix libaccounts and signon version for Qt5 build
+
+---
+ src/signon-ui.pro            | 4 ++--
+ tests/unit/tst_signon_ui.pro | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/signon-ui.pro b/src/signon-ui.pro
+index e56ab11..a78ad0a 100644
+--- a/src/signon-ui.pro
++++ b/src/signon-ui.pro
+@@ -32,8 +32,8 @@ PKGCONFIG += \
+ QT += \
+     widgets
+ PKGCONFIG += \
+-    accounts-qt6 \
+-    libsignon-qt6
++    accounts-qt$$QT_MAJOR_VERSION \
++    libsignon-qt$$QT_MAJOR_VERSION
+ CONFIG(force-foreign-qwindow) {
+     DEFINES += FORCE_FOREIGN_QWINDOW
+ }
+diff --git a/tests/unit/tst_signon_ui.pro b/tests/unit/tst_signon_ui.pro
+index 117b32b..815e52b 100644
+--- a/tests/unit/tst_signon_ui.pro
++++ b/tests/unit/tst_signon_ui.pro
+@@ -29,8 +29,8 @@ PKGCONFIG += \
+ QT += \
+     widgets
+ PKGCONFIG += \
+-    accounts-qt6 \
+-    libsignon-qt6
++    accounts-qt$$QT_MAJOR_VERSION \
++    libsignon-qt$$QT_MAJOR_VERSION
+ 
+ SOURCES += \
+     fake-libnotify.cpp \
+-- 
+GitLab
+
